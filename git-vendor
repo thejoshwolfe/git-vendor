@@ -2,6 +2,8 @@
 
 import os, sys, re
 import subprocess, shlex
+import fnmatch
+import collections
 
 class CliOptions:
     verbose = False
@@ -17,6 +19,8 @@ def main():
     parser.add_argument("--url")
     parser.add_argument("--ref")
     parser.add_argument("--dir")
+    parser.add_argument("--include-fnmatch", action="append")
+    parser.add_argument("--exclude-fnmatch", action="append")
 
     args = parser.parse_args()
     if args.verbose:
@@ -29,9 +33,9 @@ def main():
 
     if args.command == "add":
         assert args.url and args.ref and args.dir
-        do_add(args.url, args.ref, args.dir)
+        do_add(args.url, args.ref, args.dir, args.include_fnmatch or [], args.exclude_fnmatch or [])
 
-def do_add(url, ref, dir):
+def do_add(url, ref, dir, include_patterns, exclude_patterns):
     # Validate dir.
     repo_root = git("rev-parse",
         "--show-toplevel",
@@ -54,6 +58,9 @@ def do_add(url, ref, dir):
         external_ref_local_name,
         mode="single_line")
     vendored_tree_object_name = get_git_commit_tree_object_name(external_ref_local_name)
+    if len(include_patterns) + len(exclude_patterns) > 0:
+        vendored_tree_object_name = filter_tree(vendored_tree_object_name, include_patterns, exclude_patterns)
+
     current_complete_tree_object_name = git(
         "write-tree",
         mode="single_line")
@@ -82,9 +89,8 @@ def insert_tree_at_path(base_tree_object_name, new_tree_object_name, new_tree_su
         new_ls_tree_lines = []
         inserted_yet = False
         if base != None:
-            for ls_tree_line in git(
-                "--work-tree", ".",
-                "ls-tree",
+            for ls_tree_line in git("ls-tree",
+                "--full-tree",
                 "-z",
                 base,
                 mode="null_terminated_lines",
@@ -113,6 +119,65 @@ def insert_tree_at_path(base_tree_object_name, new_tree_object_name, new_tree_su
             ),
             mode="single_line")
     return recurse(base_tree_object_name, new_tree_subdir_path)
+
+def filter_tree(tree_object_name, include_patterns, exclude_patterns):
+    depth_to_parent_to_ls_tree_lines = collections.defaultdict(lambda: collections.defaultdict(list), {
+        # 3: {"a/b/c": ["100644 blob 615a35da50b4aa9c4525e26aba1cd830010e4e46\t.gitignore"]},
+    })
+
+    # Filter the items.
+    for ls_tree_line in git("ls-tree",
+        "--full-tree", "-r",
+        "-z",
+        tree_object_name,
+        mode="null_terminated_lines",
+    ):
+        stuff, name = ls_tree_line.split("\t", 1)
+        if len(include_patterns) > 0:
+            if not any(fnmatch.fnmatch(name, pattern) for pattern in include_patterns):
+                continue
+        if len(exclude_patterns) > 0:
+            if any(fnmatch.fnmatch(name, pattern) for pattern in exclude_patterns):
+                continue
+        if "/" in name:
+            parent, child = name.rsplit("/", 1)
+            depth_to_parent_to_ls_tree_lines[len(parent.split("/"))][parent].append("{}\t{}".format(stuff, child))
+        else:
+            depth_to_parent_to_ls_tree_lines[0][""].append(ls_tree_line)
+
+    # Build new trees from leaves up.
+    root_tree = None
+    for depth in reversed(range(max(depth_to_parent_to_ls_tree_lines.keys()) + 1)):
+        parent_to_ls_tree_lines = depth_to_parent_to_ls_tree_lines[depth]
+        assert root_tree == None
+
+        parent_and_ls_tree_lines = list(parent_to_ls_tree_lines.items())
+        tree_object_names = git("mktree",
+            "-z", "--batch",
+            input="".join(
+                "".join(
+                    ls_tree_line + "\x00"
+                    for ls_tree_line in ls_tree_lines
+                ) + "\x00"
+                for _, ls_tree_lines in parent_and_ls_tree_lines
+            ),
+            mode="newline_terminated_lines",
+        )
+        for tree_object_name, (name, _) in zip(tree_object_names, parent_and_ls_tree_lines):
+            assert root_tree == None
+            if "/" in name:
+                parent, child = name.rsplit("/", 1)
+                ls_tree_line = "040000 tree {}\t{}".format(tree_object_name, child)
+                depth_to_parent_to_ls_tree_lines[len(parent.split("/"))][parent].append(ls_tree_line)
+            elif len(name) > 0:
+                ls_tree_line = "040000 tree {}\t{}".format(tree_object_name, name)
+                depth_to_parent_to_ls_tree_lines[0][""].append(ls_tree_line)
+            else:
+                # Root tree.
+                root_tree = tree_object_name
+    assert root_tree != None
+    return root_tree
+
 
 def get_git_commit_tree_object_name(commit_object_name):
     return git("show",
