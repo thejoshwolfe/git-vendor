@@ -1,0 +1,226 @@
+#!/usr/bin/env python3
+
+import os, sys, re
+import subprocess, shlex
+
+class CliOptions:
+    verbose = False
+    super_verbose = False
+    dry_run = False
+
+def main():
+    import argparse
+    parser = argparse.ArgumentParser()
+    parser.add_argument("-v", "--verbose", action="store_true")
+    parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument("command", choices=["add"])
+    parser.add_argument("--url")
+    parser.add_argument("--ref")
+    parser.add_argument("--dir")
+
+    args = parser.parse_args()
+    if args.verbose:
+        CliOptions.verbose = True
+    if args.dry_run:
+        CliOptions.dry_run = True
+    if os.environ.get("GIT_VENDOR_SUPER_VERBOSE", ""):
+        CliOptions.verbose = True
+        CliOptions.super_verbose = True
+
+    if args.command == "add":
+        assert args.url and args.ref and args.dir
+        do_add(args.url, args.ref, args.dir)
+
+def do_add(url, ref, dir):
+    # Validate dir.
+    repo_root = git("rev-parse",
+        "--show-toplevel",
+        mode="single_line")
+    assert is_path_within(repo_root, dir), "--dir is outside the git repo"
+    path_in_repo = os.path.relpath(dir, repo_root)
+    assert path_in_repo != ".", "--dir must not be the entire repo"
+    assert not os.path.exists(dir), "--dir already exists"
+    path_in_repo = path_in_repo.replace(os.path.sep, "/")
+
+    external_ref_local_name = "refs/vendor/fetch_head"
+    git("fetch",
+        "--depth", "1",
+        url,
+        "{}:{}".format(ref, external_ref_local_name),
+        mode="mutating")
+
+    external_commit_object_name = git("rev-parse",
+        "--verify",
+        external_ref_local_name,
+        mode="single_line")
+    vendored_tree_object_name = get_git_commit_tree_object_name(external_ref_local_name)
+    current_complete_tree_object_name = git(
+        "write-tree",
+        mode="single_line")
+
+    if True: # perhaps --no-update-index
+        new_complete_tree_object_name = insert_tree_at_path(current_complete_tree_object_name, vendored_tree_object_name, path_in_repo)
+        git("read-tree",
+            new_complete_tree_object_name,
+            mode="mutating")
+
+    if True: # perhaps --no-update-worktree
+        os.makedirs(dir)
+        git(
+            "--work-tree", dir,
+            "restore",
+            "--source", vendored_tree_object_name,
+            ".",
+            mode="mutating")
+
+def insert_tree_at_path(base_tree_object_name, new_tree_object_name, new_tree_subdir_path):
+    def recurse(base, subdir_path):
+        if "/" in subdir_path:
+            name, rest_of_subdir_path = subdir_path.split("/", 1)
+        else:
+            name, rest_of_subdir_path = subdir_path, None
+        new_ls_tree_lines = []
+        inserted_yet = False
+        if base != None:
+            for ls_tree_line in git(
+                "--work-tree", ".",
+                "ls-tree",
+                "-z",
+                base,
+                mode="null_terminated_lines",
+            ):
+                stuff, this_name = ls_tree_line.split("\t", 1)
+                if this_name == name:
+                    # Update this node.
+                    mode_and_type, object_name = stuff.rsplit(" ", 1)
+                    assert mode_and_type == "040000 tree", "A non-directory file is in the way: " + new_tree_subdir_path
+                    assert rest_of_subdir_path != None, "Tree already exists: " + new_tree_subdir_path
+                    ls_tree_line = "040000 tree {}\t{}".format(recurse(object_name, rest_of_subdir_path), name)
+                    inserted_yet = True
+                new_ls_tree_lines.append(ls_tree_line)
+        if not inserted_yet:
+            if rest_of_subdir_path != None:
+                tree_object_name = recurse(None, rest_of_subdir_path)
+            else:
+                tree_object_name = new_tree_object_name
+            ls_tree_line = "040000 tree {}\t{}".format(tree_object_name, name)
+            new_ls_tree_lines.append(ls_tree_line)
+        return git("mktree",
+            "-z",
+            input="".join(
+                line + "\x00"
+                for line in new_ls_tree_lines
+            ),
+            mode="single_line")
+    return recurse(base_tree_object_name, new_tree_subdir_path)
+
+def get_git_commit_tree_object_name(commit_object_name):
+    return git("show",
+        "-s", "--format=%T",
+        commit_object_name,
+        mode="single_line",
+    )
+
+def git(*args, mode, cwd=".", input=None, output_path=None):
+    if type(input) == str:
+        input = input.encode("utf8")
+
+    cmd = ["git"]
+    cmd.extend(args)
+
+    if output_path != None:
+        assert mode == "mutating"
+
+    if CliOptions.super_verbose or (CliOptions.verbose and mode == "mutating"):
+        shell_script = " ".join(shlex.quote(arg) for arg in cmd)
+        if input == b"":
+            shell_script = shell_script + " <&-"
+        if cwd != None and cwd != ".":
+            shell_script = "(cd {} && {})".format(shlex.quote(cwd), shell_script)
+        if output_path != None:
+            shell_script += " > " + output_path
+        if input == None or input == b"":
+            if CliOptions.dry_run and mode == "mutating":
+                shell_script = "# " + shell_script
+        else:
+            # some rough heuristic to split the input into "lines" or whatever.
+            lines = re.findall(b".+?(?:[\x00\n]+|$)", input, flags=re.DOTALL)
+            def quote_for_echo(line):
+                if line == b"":
+                    return "''"
+                if line[0] == b"-":
+                    starts_with_hyphen = True
+                    line = line[1:]
+                else:
+                    starts_with_hyphen = False
+                # Replace strange bytes with hex escapes (for echo -e).
+                def escape_byte(b):
+                    if b == b"\n": return b"\\n"
+                    if b == b"\t": return b"\\t"
+                    return b"\\x" + hex(ord(b))[2:].zfill(2).encode("utf8")
+                # We need to keep bytes up through here so we can escape non-ascii correctly.
+                s = re.sub(b"[\x00-\x1f\\\\'\x7f-\xff]", (lambda m: escape_byte(m.group())), line).decode("utf8")
+                if starts_with_hyphen:
+                    # Because you can't echo "-n" literally, this needs extra support
+                    s = "\\x2d" + s
+                return "'" + s + "'"
+            input_script = "{" + "".join(
+                "\n  echo -ne " + quote_for_echo(line)
+                for line in lines
+            ) + "\n}"
+            if CliOptions.dry_run and mode == "mutating":
+                shell_script = ": #" + shell_script
+            shell_script = input_script + " | " + shell_script
+        sys.stderr.write(shell_script + "\n"); sys.stderr.flush()
+
+    if mode == "mutating":
+        if not CliOptions.dry_run:
+            if output_path != None:
+                with open(output_path, "wb") as f:
+                    subprocess.run(cmd, cwd=cwd, input=input, stdout=f, check=True)
+            else:
+                subprocess.run(cmd, cwd=cwd, input=input, check=True)
+        return None
+
+    # read-only or otherwise no-observable-change command.
+
+    if mode == "inherit_stdout":
+        subprocess.run(cmd, cwd=cwd, input=input, check=True)
+        return
+
+    if mode == "yield_newline_terminated_lines":
+        assert input == None, "not supported"
+        process = subprocess.Popen(cmd, cwd=cwd, stdout=subprocess.PIPE, encoding="utf8")
+        def yield_lines_and_check():
+            for line in process.stdout:
+                assert line[-1:] == "\n"
+                yield line[:-1]
+            if process.wait() != 0:
+                raise subprocess.CalledProcessError(process.returncode, cmd)
+        return yield_lines_and_check()
+
+    output = subprocess.run(cmd, cwd=cwd, input=input, check=True, stdout=subprocess.PIPE).stdout
+    if mode == "raw_bytes":
+        return output
+    if mode == "single_line":
+        lines = output.decode("utf8").split("\n")
+        assert lines[-1] == ""
+        [line] = lines[:-1]
+        return line
+    if mode == "null_terminated_lines":
+        lines = output.decode("utf8").split("\x00")
+        assert lines[-1] == ""
+        return lines[:-1]
+    if mode == "newline_terminated_lines":
+        lines = output.decode("utf8").split("\n")
+        assert lines[-1] == ""
+        return lines[:-1]
+    assert False, mode
+
+def is_path_within(super_dir, sub_dir):
+    super_dir = os.path.abspath(super_dir)
+    sub_dir = os.path.abspath(sub_dir)
+    return os.path.commonpath([super_dir, sub_dir]).startswith(super_dir)
+
+if __name__ == "__main__":
+    main()
