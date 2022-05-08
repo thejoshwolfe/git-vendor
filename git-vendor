@@ -145,7 +145,6 @@ def find_config_item_by_dir(actual_dir):
 def download_the_thing(config_item, section_index):
 
     # Fetch the latest external info.
-    external_ref_local_name = "refs/vendor/fetch_head"
     def should_fetch():
         # We'd like to just fetch, but `git fetch` produces trash output when there's nothing to do.
         # So first check if we would fetch anything, then do the fetch.
@@ -170,6 +169,7 @@ def download_the_thing(config_item, section_index):
         theirs = remote_lines[0].split("\t", 1)[0]
         return ours != theirs
     if should_fetch():
+        external_ref_local_name = "refs/vendor/fetch_head"
         git("fetch",
             "--no-tags", "--force",
             "--depth", "1",
@@ -177,14 +177,14 @@ def download_the_thing(config_item, section_index):
             "{}:{}".format(config_item.ref, external_ref_local_name),
             mode="inherit_stdout")
 
-    external_commit_object_name = git("rev-parse",
-        "--verify",
-        external_ref_local_name,
-        mode="single_line")
-    config_item.ref_sha1 = external_commit_object_name
-    edit_config_file(config_item, section_index)
+        external_commit_object_name = git("rev-parse",
+            "--verify",
+            external_ref_local_name,
+            mode="single_line")
+        config_item.ref_sha1 = external_commit_object_name
+        edit_config_file(config_item, section_index)
 
-    vendored_tree_object_name = get_git_commit_tree_object_name(external_ref_local_name)
+    vendored_tree_object_name = get_git_commit_tree_object_name(config_item.ref_sha1)
     if len(config_item.include_fnmatch) + len(config_item.exclude_fnmatch) > 0:
         vendored_tree_object_name = filter_tree(vendored_tree_object_name, config_item.include_fnmatch, config_item.exclude_fnmatch)
 
