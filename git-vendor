@@ -111,16 +111,20 @@ def do_rename(actual_dir, actual_new_dir):
     config_item.dir = validate_dir(actual_new_dir, "--new-dir")
     edit_config_file(config_item, section_index)
 
+    # Trailing slashes on this parameter ruin everything.
+    actual_new_dir = os.path.normpath(actual_new_dir)
+
     if CliOptions.dry_run:
         print("")
         print("would move tree: {} -> {}".format(
             shlex.quote(os.path.normpath(actual_dir)),
-            shlex.quote(os.path.normpath(actual_new_dir)),
+            shlex.quote(actual_new_dir),
         ))
         print("")
     else:
+        os.makedirs(os.path.dirname(actual_new_dir), exist_ok=True)
         git("mv",
-            actual_dir,
+            os.path.normpath(actual_dir),
             actual_new_dir,
             mode="mutating")
         # Tell the user to proceed with a git commit.
