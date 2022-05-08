@@ -15,7 +15,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("-v", "--verbose", action="store_true")
     parser.add_argument("--dry-run", action="store_true")
-    parser.add_argument("command", choices=["add", "update"])
+    parser.add_argument("command", choices=["add", "update", "status"])
     parser.add_argument("--dir")
     parser.add_argument("--url")
     parser.add_argument("--ref")
@@ -31,12 +31,17 @@ def main():
     if os.environ.get("GIT_VENDOR_SUPER_VERBOSE", ""):
         CliOptions.verbose = True
         CliOptions.super_verbose = True
+    if args.command == "status":
+        # 'status' is an alias for 'update --dry-run'
+        args.command = "update"
+        CliOptions.dry_run = True
 
     if args.command == "add":
         assert args.url and args.ref and args.dir
         do_add(args.url, args.ref, args.dir, args.include_fnmatch, args.exclude_fnmatch)
     elif args.command == "update":
         do_update()
+    else: assert False
 
 def do_add(url, ref, dir, include_fnmatch, exclude_fnmatch):
     assert url and ref and dir
@@ -49,42 +54,66 @@ def do_add(url, ref, dir, include_fnmatch, exclude_fnmatch):
     path_in_repo = path_in_repo.replace(os.path.sep, "/")
 
     validate_url(url)
+    validate_ref(ref)
+    # validate existing config file, if any.
+    read_config_file()
 
-    new_config = ConfigItem()
-    new_config.url = url
-    new_config.ref = ref
-    new_config.dir = path_in_repo
+    new_config_item = ConfigItem()
+    new_config_item.url = url
+    new_config_item.ref = ref
+    new_config_item.dir = path_in_repo
     if include_fnmatch:
-        new_config.include_fnmatch = include_fnmatch
+        new_config_item.include_fnmatch = include_fnmatch
     if exclude_fnmatch:
-        new_config.exclude_fnmatch = exclude_fnmatch
+        new_config_item.exclude_fnmatch = exclude_fnmatch
 
-    section_index = edit_config_file(new_config, insert_new=True)
+    download_the_thing(new_config_item, NEW_SECTION)
 
-    download_the_thing(section_index)
+def do_update():
+    for section_index, config_item in enumerate(read_config_file()):
+        download_the_thing(config_item, section_index)
 
-def download_the_thing(section_index):
-    sections = read_config_file()
-    config_item = sections[section_index]
+def download_the_thing(config_item, section_index):
 
+    # Fetch the latest external info.
     external_ref_local_name = "refs/vendor/fetch_head"
-    git("fetch",
-        "--depth", "1",
-        config_item.url,
-        "{}:{}".format(config_item.ref, external_ref_local_name),
-        mode="mutating")
+    def should_fetch():
+        # We'd like to just fetch, but `git fetch` produces trash output when there's nothing to do.
+        # So first check if we would fetch anything, then do the fetch.
+        if config_item.ref_sha1 == None:
+            return True
+        try:
+            ours = git("rev-parse",
+                "--verify",
+                config_item.ref_sha1,
+                suppress_stderr=True,
+                mode="single_line")
+        except subprocess.CalledProcessError:
+            # The object has been gc'ed.
+            return True
+        remote_lines = git("ls-remote",
+            config_item.url,
+            config_item.ref,
+            mode="newline_terminated_lines")
+        if len(remote_lines) != 1:
+            return True
+        # e.g. "615624c2c2cfbed7e30a158493b704231b14ff8e\trefs/heads/main"
+        theirs = remote_lines[0].split("\t", 1)[0]
+        return ours != theirs
+    if should_fetch():
+        git("fetch",
+            "--no-tags", "--force",
+            "--depth", "1",
+            config_item.url,
+            "{}:{}".format(config_item.ref, external_ref_local_name),
+            mode="inherit_stdout")
 
     external_commit_object_name = git("rev-parse",
         "--verify",
         external_ref_local_name,
         mode="single_line")
-    if True: # some kind of check?
-        if config_item.ref_sha1 == None:
-            pass # we now know what it should be. edit the file?
-        elif config_item.ref_sha1 != external_commit_object_name:
-            pass # mismatch. is this alarming? or just edit the file?
     config_item.ref_sha1 = external_commit_object_name
-    edit_config_file(config_item, section_index=section_index)
+    edit_config_file(config_item, section_index)
 
     vendored_tree_object_name = get_git_commit_tree_object_name(external_ref_local_name)
     if len(config_item.include_fnmatch) + len(config_item.exclude_fnmatch) > 0:
@@ -93,28 +122,44 @@ def download_the_thing(section_index):
     current_complete_tree_object_name = git(
         "write-tree",
         mode="single_line")
+    new_complete_tree_object_name = insert_tree_at_path(current_complete_tree_object_name, vendored_tree_object_name, config_item.dir)
+    if current_complete_tree_object_name == new_complete_tree_object_name:
+        # Already up to date.
+        if not CliOptions.dry_run:
+            print("Already up to date.")
+        return
 
-    if True: # perhaps --no-update-index
-        new_complete_tree_object_name = insert_tree_at_path(current_complete_tree_object_name, vendored_tree_object_name, config_item.dir)
+    if CliOptions.dry_run:
+        # Show a diff of the incoming changes.
+        print("")
+        print("changes to to be applied to: " + config_item.dir)
+        git("diff",
+            "--shortstat",
+            current_complete_tree_object_name, new_complete_tree_object_name,
+            mode="inherit_stdout")
+    else:
+        # Update the index.
         git("read-tree",
             new_complete_tree_object_name,
             mode="mutating")
-
-    if True: # perhaps --no-update-worktree
+        # Update the work tree.
         repo_root = get_repo_root()
-        dir = os.path.join(repo_root, config_item.dir)
-        os.makedirs(dir)
+        actual_dir = os.path.join(repo_root, config_item.dir)
+        os.makedirs(actual_dir, exist_ok=True)
         git(
-            "--work-tree", dir,
+            "--work-tree", actual_dir,
             "restore",
             "--source", vendored_tree_object_name,
             ".",
             mode="mutating")
 
-def do_update():
-    sections = read_config_file()
-    for section_index, section in enumerate(sections):
-        pass
+        # Tell the user to proceed with a git commit.
+        print("Changes staged to be committed:")
+        git("diff",
+            "--cached", "--shortstat",
+            mode="inherit_stdout")
+        print("")
+        print("Use \"git commit\" to proceed with the commit.")
 
 class ConfigItem:
     def __init__(self):
@@ -136,8 +181,11 @@ assert set(required_config_property_names) <= set(config_name_order)
 def read_config_file():
     repo_root = get_repo_root()
     config_file_path = os.path.join(repo_root, ".git-vendor-config")
-    with open(config_file_path) as f:
-        lines = list(f)
+    try:
+        with open(config_file_path) as f:
+            lines = list(f)
+    except FileNotFoundError:
+        lines = []
     if len(lines) == 0:
         return []
 
@@ -195,15 +243,15 @@ def read_config_file():
 
     return sections
 
-def edit_config_file(new_config_item, *, section_index=None, insert_new=False):
-    assert section_index != None or insert_new
+NEW_SECTION = -1
+def edit_config_file(new_config_item, section_index):
     repo_root = get_repo_root()
     config_file_path = os.path.join(repo_root, ".git-vendor-config")
     try:
         with open(config_file_path) as f:
             lines = list(f)
     except FileNotFoundError:
-        if not insert_new:
+        if section_index != NEW_SECTION:
             raise
         lines = []
     if len(lines) == 0:
@@ -336,7 +384,7 @@ def edit_config_file(new_config_item, *, section_index=None, insert_new=False):
 
     flush_section()
 
-    if insert_new:
+    if section_index == NEW_SECTION:
         # Create a new section.
         if theres_at_least_one_section:
             # Insert a separator.
@@ -356,11 +404,48 @@ def edit_config_file(new_config_item, *, section_index=None, insert_new=False):
                 new_lines.append("{}={}".format(name, new_config_item.__dict__[field_name]))
 
     # Save the file
-    with open(config_file_path, "w") as f:
-        for line in new_lines:
-            f.write(line.rstrip() + "\n")
+    if new_lines != lines:
+        if CliOptions.dry_run:
+            if not os.path.exists(config_file_path):
+                print("")
+                print("would create file: " + os.path.relpath(config_file_path))
+                print("with contents:")
+                print("")
+                for line in new_lines:
+                    print(line.rstrip())
+                print("")
+            else:
+                # use `git diff <blob> <blob>` to show the changes
+                # use `git ls-tree` to get the 'from' blob object name.
+                # use `git hash-object` to get the 'to' blob object name.
+                git("diff",
+                    git("ls-tree",
+                        "HEAD",
+                        "--",
+                        os.path.relpath(config_file_path),
+                        mode="single_line",
+                    ).split("\t")[0].rsplit(" ", 1)[1],
+                    git("hash-object",
+                        "-w", "--stdin",
+                        input="".join(
+                            line.rstrip() + "\n"
+                            for line in new_lines
+                        ),
+                        mode="single_line",
+                    ),
+                    mode="inherit_stdout",
+                )
+        else:
+            # Actually do it.
+            with open(config_file_path, "w") as f:
+                for line in new_lines:
+                    f.write(line.rstrip() + "\n")
+            git("update-index",
+                "--add",
+                os.path.relpath(config_file_path),
+                mode="mutating")
 
-    if insert_new:
+    if section_index == NEW_SECTION:
         # Return the new section_index.
         if theres_at_least_one_section:
             return current_section_index
@@ -391,8 +476,11 @@ def insert_tree_at_path(base_tree_object_name, new_tree_object_name, new_tree_su
                     # Update this node.
                     mode_and_type, object_name = stuff.rsplit(" ", 1)
                     assert mode_and_type == "040000 tree", "A non-directory file is in the way: " + new_tree_subdir_path
-                    assert rest_of_subdir_path != None, "Tree already exists: " + new_tree_subdir_path
-                    ls_tree_line = "040000 tree {}\t{}".format(recurse(object_name, rest_of_subdir_path), name)
+                    if rest_of_subdir_path != None:
+                        ls_tree_line = "040000 tree {}\t{}".format(recurse(object_name, rest_of_subdir_path), name)
+                    else:
+                        # Overwrite existing content.
+                        ls_tree_line = "040000 tree {}\t{}".format(new_tree_object_name, name)
                     inserted_yet = True
                 new_ls_tree_lines.append(ls_tree_line)
         if not inserted_yet:
@@ -471,9 +559,9 @@ def filter_tree(tree_object_name, include_patterns, exclude_patterns):
 
 
 def get_git_commit_tree_object_name(commit_object_name):
-    return git("show",
-        "-s", "--format=%T",
-        commit_object_name,
+    return git("rev-parse",
+        "--verify",
+        commit_object_name + "^{tree}",
         mode="single_line",
     )
 
@@ -483,12 +571,16 @@ def get_repo_root():
         "--show-toplevel",
         mode="single_line")
 
-def git(*args, mode, cwd=".", input=None, output_path=None):
+def git(*args, mode, cwd=".", input=None, output_path=None, suppress_stderr=False):
     if type(input) == str:
         input = input.encode("utf8")
 
     cmd = ["git"]
     cmd.extend(args)
+
+    stderr = None
+    if suppress_stderr:
+        stderr = subprocess.DEVNULL
 
     if output_path != None:
         assert mode == "mutating"
@@ -497,6 +589,8 @@ def git(*args, mode, cwd=".", input=None, output_path=None):
         shell_script = " ".join(shlex.quote(arg) for arg in cmd)
         if input == b"":
             shell_script = shell_script + " <&-"
+        if suppress_stderr:
+            shell_script = shell_script + " 2>/dev/null"
         if cwd != None and cwd != ".":
             shell_script = "(cd {} && {})".format(shlex.quote(cwd), shell_script)
         if output_path != None:
@@ -539,20 +633,20 @@ def git(*args, mode, cwd=".", input=None, output_path=None):
         if not CliOptions.dry_run:
             if output_path != None:
                 with open(output_path, "wb") as f:
-                    subprocess.run(cmd, cwd=cwd, input=input, stdout=f, check=True)
+                    subprocess.run(cmd, cwd=cwd, input=input, stdout=f, stderr=stderr, check=True)
             else:
-                subprocess.run(cmd, cwd=cwd, input=input, check=True)
+                subprocess.run(cmd, cwd=cwd, input=input, stderr=stderr, check=True)
         return None
 
     # read-only or otherwise no-observable-change command.
 
     if mode == "inherit_stdout":
-        subprocess.run(cmd, cwd=cwd, input=input, check=True)
+        subprocess.run(cmd, cwd=cwd, input=input, stderr=stderr, check=True)
         return
 
     if mode == "yield_newline_terminated_lines":
         assert input == None, "not supported"
-        process = subprocess.Popen(cmd, cwd=cwd, stdout=subprocess.PIPE, encoding="utf8")
+        process = subprocess.Popen(cmd, cwd=cwd, stdout=subprocess.PIPE, stderr=stderr, encoding="utf8")
         def yield_lines_and_check():
             for line in process.stdout:
                 assert line[-1:] == "\n"
@@ -561,7 +655,7 @@ def git(*args, mode, cwd=".", input=None, output_path=None):
                 raise subprocess.CalledProcessError(process.returncode, cmd)
         return yield_lines_and_check()
 
-    output = subprocess.run(cmd, cwd=cwd, input=input, check=True, stdout=subprocess.PIPE).stdout
+    output = subprocess.run(cmd, cwd=cwd, input=input, stderr=stderr, check=True, stdout=subprocess.PIPE).stdout
     if mode == "raw_bytes":
         return output
     if mode == "single_line":
@@ -605,6 +699,11 @@ def validate_url(url):
         pass
 
     sys.exit("ERROR: Invalid --url={}".format(url))
+
+def validate_ref(ref):
+    # This is really the only thing to check for, because it's interpreted specially during `git fetch` and such.
+    if "*" in ref:
+        sys.exit("ERROR: Invalid --ref={}".format(ref))
 
 def warning(*lines):
     for line in lines:
