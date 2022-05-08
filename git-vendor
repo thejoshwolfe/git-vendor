@@ -20,8 +20,10 @@ def main():
         "update", "status",
         "ls", "list",
         "rm", "remove",
+        "mv", "rename",
     ])
     parser.add_argument("--dir")
+    parser.add_argument("--new-dir")
     parser.add_argument("--url")
     parser.add_argument("--ref")
     parser.add_argument("--ref-sha1")
@@ -51,18 +53,13 @@ def main():
     elif args.command in ("rm", "remove"):
         assert args.dir
         do_remove(args.dir)
+    elif args.command in ("mv", "rename"):
+        assert args.dir and args.new_dir
+        do_rename(args.dir, args.new_dir)
     else: assert False
 
 def do_add(url, ref, dir, include_fnmatch, exclude_fnmatch):
-    assert url and ref and dir
-    # Validate dir.
-    repo_root = get_repo_root()
-    assert is_path_within(repo_root, dir), "--dir is outside the git repo"
-    path_in_repo = os.path.relpath(dir, repo_root)
-    assert path_in_repo != ".", "--dir must not be the entire repo"
-    assert not os.path.exists(dir), "--dir already exists"
-    path_in_repo = path_in_repo.replace(os.path.sep, "/")
-
+    path_in_repo = validate_dir(dir, "--dir")
     validate_url(url)
     validate_ref(ref)
     # validate existing config file, if any.
@@ -88,11 +85,10 @@ def do_list():
         print("{} ({})".format(config_item.dir, config_item.ref))
 
 def do_remove(actual_dir):
-    dead_config_item, section_index = find_config_item_by_dir(actual_dir)
+    _, section_index = find_config_item_by_dir(actual_dir)
     edit_config_file(None, section_index)
 
     if CliOptions.dry_run:
-        # TODO: dunno what to do here.
         print("")
         print("would delete tree: " + os.path.normpath(actual_dir))
         print("")
@@ -101,6 +97,31 @@ def do_remove(actual_dir):
             "-r", "-q", "--force",
             "--",
             actual_dir,
+            mode="mutating")
+        # Tell the user to proceed with a git commit.
+        print("Changes staged to be committed:")
+        git("diff",
+            "--cached", "--shortstat",
+            mode="inherit_stdout")
+        print("")
+        print("Use \"git commit\" to proceed with the commit.")
+
+def do_rename(actual_dir, actual_new_dir):
+    config_item, section_index = find_config_item_by_dir(actual_dir)
+    config_item.dir = validate_dir(actual_new_dir, "--new-dir")
+    edit_config_file(config_item, section_index)
+
+    if CliOptions.dry_run:
+        print("")
+        print("would move tree: {} -> {}".format(
+            shlex.quote(os.path.normpath(actual_dir)),
+            shlex.quote(os.path.normpath(actual_new_dir)),
+        ))
+        print("")
+    else:
+        git("mv",
+            actual_dir,
+            actual_new_dir,
             mode="mutating")
         # Tell the user to proceed with a git commit.
         print("Changes staged to be committed:")
@@ -770,6 +791,14 @@ def is_path_within(super_dir, sub_dir):
     super_dir = os.path.abspath(super_dir)
     sub_dir = os.path.abspath(sub_dir)
     return os.path.commonpath([super_dir, sub_dir]).startswith(super_dir)
+
+def validate_dir(dir, param_name):
+    repo_root = get_repo_root()
+    assert is_path_within(repo_root, dir), param_name + " is outside the git repo"
+    path_in_repo = os.path.relpath(dir, repo_root)
+    assert path_in_repo != ".", param_name + " must not be the entire repo"
+    assert not os.path.exists(dir), param_name + " already exists"
+    return path_in_repo.replace(os.path.sep, "/")
 
 def validate_url(url):
     # See `git help fetch` section GIT URLS.
