@@ -15,7 +15,12 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("-v", "--verbose", action="store_true")
     parser.add_argument("--dry-run", action="store_true")
-    parser.add_argument("command", choices=["add", "update", "status"])
+    parser.add_argument("command", choices=[
+        "add",
+        "update", "status",
+        "ls", "list",
+        "rm", "remove",
+    ])
     parser.add_argument("--dir")
     parser.add_argument("--url")
     parser.add_argument("--ref")
@@ -41,6 +46,11 @@ def main():
         do_add(args.url, args.ref, args.dir, args.include_fnmatch, args.exclude_fnmatch)
     elif args.command == "update":
         do_update()
+    elif args.command in ("ls", "list"):
+        do_list()
+    elif args.command in ("rm", "remove"):
+        assert args.dir
+        do_remove(args.dir)
     else: assert False
 
 def do_add(url, ref, dir, include_fnmatch, exclude_fnmatch):
@@ -72,6 +82,44 @@ def do_add(url, ref, dir, include_fnmatch, exclude_fnmatch):
 def do_update():
     for section_index, config_item in enumerate(read_config_file()):
         download_the_thing(config_item, section_index)
+
+def do_list():
+    for config_item in read_config_file():
+        print("{} ({})".format(config_item.dir, config_item.ref))
+
+def do_remove(actual_dir):
+    dead_config_item, section_index = find_config_item_by_dir(actual_dir)
+    edit_config_file(None, section_index)
+
+    if CliOptions.dry_run:
+        # TODO: dunno what to do here.
+        print("")
+        print("would delete tree: " + os.path.normpath(actual_dir))
+        print("")
+    else:
+        git("rm",
+            "-r", "-q", "--force",
+            "--",
+            actual_dir,
+            mode="mutating")
+        # Tell the user to proceed with a git commit.
+        print("Changes staged to be committed:")
+        git("diff",
+            "--cached", "--shortstat",
+            mode="inherit_stdout")
+        print("")
+        print("Use \"git commit\" to proceed with the commit.")
+
+def find_config_item_by_dir(actual_dir):
+    repo_root = get_repo_root()
+    path_in_repo = os.path.normpath(os.path.relpath(actual_dir, repo_root)).replace(os.path.sep, "/")
+    for section_index, config_item in enumerate(read_config_file()):
+        if config_item.dir == path_in_repo:
+            return (config_item, section_index)
+    sys.exit("\n".join("ERROR: " + line for line in [
+        "dir is not vendored content: " + path_in_repo,
+        "tip: try \"git-vendor list\"",
+    ]))
 
 def download_the_thing(config_item, section_index):
 
@@ -270,7 +318,7 @@ def edit_config_file(new_config_item, section_index):
     new_lines = []
     def flush_section():
         nonlocal current_section_index
-        if current_section_index != section_index:
+        if new_config_item == None or current_section_index != section_index:
             current_section_index += 1
             return
         current_section_index += 1
@@ -347,6 +395,26 @@ def edit_config_file(new_config_item, section_index):
             else: assert False
 
     for line in lines:
+        if new_config_item == None and current_section_index == section_index:
+            # We're deleting this section.
+            if not theres_at_least_one_section and line.lstrip()[:1] == "#":
+                # This is comments before the first section starts, so don't actually delete this part yet.
+                new_lines.append(line)
+                continue
+            elif line.strip() == "---":
+                if current_section_index == 0:
+                    # This is the separator at the end of the first section, which we are deleting.
+                    flush_section()
+                    continue
+                else:
+                    # This is the separator at the end of the section we're deleting,
+                    # but we already deleted the separator at the beginning of this section so keep this one.
+                    pass
+            else:
+                # This is the content of the section we're deleting. Goodbye.
+                theres_at_least_one_section = True
+                continue
+
         if line.lstrip()[:1] in ("", "#"):
             # Blank line or comment.
             new_lines.append(line)
@@ -354,7 +422,11 @@ def edit_config_file(new_config_item, section_index):
 
         if line.strip() == "---":
             flush_section()
-            new_lines.append(line)
+            if new_config_item == None and current_section_index == section_index:
+                # We're about to delete the next section, so omit this separator.
+                pass
+            else:
+                new_lines.append(line)
             continue
 
         theres_at_least_one_section = True
@@ -383,6 +455,7 @@ def edit_config_file(new_config_item, section_index):
         new_lines.append(line)
 
     flush_section()
+    total_sections = current_section_index
 
     if section_index == NEW_SECTION:
         # Create a new section.
@@ -402,11 +475,20 @@ def edit_config_file(new_config_item, section_index):
                     new_lines.append("{}={}".format(name, value))
             else:
                 new_lines.append("{}={}".format(name, new_config_item.__dict__[field_name]))
+    elif new_config_item == None and section_index == total_sections - 1:
+        # We deleted the last section. Trim any blank lines we left at the end of the file.
+        while len(new_lines) > 0 and len(new_lines[-1].strip()) == 0:
+            del new_lines[-1]
 
     # Save the file
     if new_lines != lines:
         if CliOptions.dry_run:
-            if not os.path.exists(config_file_path):
+            if new_config_item == None and total_sections == 1:
+                # Deleted the last item.
+                print("")
+                print("would delete file: " + os.path.relpath(config_file_path))
+                print("")
+            elif not os.path.exists(config_file_path):
                 print("")
                 print("would create file: " + os.path.relpath(config_file_path))
                 print("with contents:")
@@ -437,13 +519,24 @@ def edit_config_file(new_config_item, section_index):
                 )
         else:
             # Actually do it.
-            with open(config_file_path, "w") as f:
-                for line in new_lines:
-                    f.write(line.rstrip() + "\n")
-            git("update-index",
-                "--add",
-                os.path.relpath(config_file_path),
-                mode="mutating")
+            if new_config_item == None and total_sections == 1:
+                # Deleted the last item.
+                try:
+                    os.remove(config_file_path)
+                except FileNotFoundError:
+                    pass
+                git("update-index",
+                    "--remove",
+                    os.path.relpath(config_file_path),
+                    mode="mutating")
+            else:
+                with open(config_file_path, "w") as f:
+                    for line in new_lines:
+                        f.write(line.rstrip() + "\n")
+                git("update-index",
+                    "--add",
+                    os.path.relpath(config_file_path),
+                    mode="mutating")
 
     if section_index == NEW_SECTION:
         # Return the new section_index.

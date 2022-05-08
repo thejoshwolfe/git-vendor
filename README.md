@@ -10,7 +10,7 @@ This means that collaborators running `git pull` will always get the content reg
 - [x] Following a branch or other named ref, and checking for and incorporating changes since the last download.
 - [x] File name based include/exclude filtering of external content using python's `fnmatch` mechanism.
 - [x] Configuration information stored in a file `.git-vendor-config` in your repo. Automatically gets edited as appropriate while maintaining formatting and comments.
-- [ ] Convenient command to support removing vendored content.
+- [x] Convenient command to support removing vendored content.
 - [ ] Convenient command to support renaming/moving local vendored content.
 - [ ] Vendoring a subdirectory instead of the entire project's directory structure. E.g. only including the `src/` directory without needing any directory in your projected called `src/`.
 - [ ] Noticing local changes applied to the external content, and facilitating pushing the changes somewhere.
