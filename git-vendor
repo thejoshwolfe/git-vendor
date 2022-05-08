@@ -3,7 +3,7 @@
 import os, sys, re
 import subprocess, shlex
 import fnmatch
-import collections
+import collections, functools
 
 class CliOptions:
     verbose = False
@@ -15,10 +15,11 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("-v", "--verbose", action="store_true")
     parser.add_argument("--dry-run", action="store_true")
-    parser.add_argument("command", choices=["add"])
+    parser.add_argument("command", choices=["add", "update"])
+    parser.add_argument("--dir")
     parser.add_argument("--url")
     parser.add_argument("--ref")
-    parser.add_argument("--dir")
+    parser.add_argument("--ref-sha1")
     parser.add_argument("--include-fnmatch", action="append")
     parser.add_argument("--exclude-fnmatch", action="append")
 
@@ -33,45 +34,75 @@ def main():
 
     if args.command == "add":
         assert args.url and args.ref and args.dir
-        do_add(args.url, args.ref, args.dir, args.include_fnmatch or [], args.exclude_fnmatch or [])
+        do_add(args.url, args.ref, args.dir, args.include_fnmatch, args.exclude_fnmatch)
+    elif args.command == "update":
+        do_update()
 
-def do_add(url, ref, dir, include_patterns, exclude_patterns):
+def do_add(url, ref, dir, include_fnmatch, exclude_fnmatch):
+    assert url and ref and dir
     # Validate dir.
-    repo_root = git("rev-parse",
-        "--show-toplevel",
-        mode="single_line")
+    repo_root = get_repo_root()
     assert is_path_within(repo_root, dir), "--dir is outside the git repo"
     path_in_repo = os.path.relpath(dir, repo_root)
     assert path_in_repo != ".", "--dir must not be the entire repo"
     assert not os.path.exists(dir), "--dir already exists"
     path_in_repo = path_in_repo.replace(os.path.sep, "/")
 
+    validate_url(url)
+
+    new_config = ConfigItem()
+    new_config.url = url
+    new_config.ref = ref
+    new_config.dir = path_in_repo
+    if include_fnmatch:
+        new_config.include_fnmatch = include_fnmatch
+    if exclude_fnmatch:
+        new_config.exclude_fnmatch = exclude_fnmatch
+
+    section_index = edit_config_file(new_config, insert_new=True)
+
+    download_the_thing(section_index)
+
+def download_the_thing(section_index):
+    sections = read_config_file()
+    config_item = sections[section_index]
+
     external_ref_local_name = "refs/vendor/fetch_head"
     git("fetch",
         "--depth", "1",
-        url,
-        "{}:{}".format(ref, external_ref_local_name),
+        config_item.url,
+        "{}:{}".format(config_item.ref, external_ref_local_name),
         mode="mutating")
 
     external_commit_object_name = git("rev-parse",
         "--verify",
         external_ref_local_name,
         mode="single_line")
+    if True: # some kind of check?
+        if config_item.ref_sha1 == None:
+            pass # we now know what it should be. edit the file?
+        elif config_item.ref_sha1 != external_commit_object_name:
+            pass # mismatch. is this alarming? or just edit the file?
+    config_item.ref_sha1 = external_commit_object_name
+    edit_config_file(config_item, section_index=section_index)
+
     vendored_tree_object_name = get_git_commit_tree_object_name(external_ref_local_name)
-    if len(include_patterns) + len(exclude_patterns) > 0:
-        vendored_tree_object_name = filter_tree(vendored_tree_object_name, include_patterns, exclude_patterns)
+    if len(config_item.include_fnmatch) + len(config_item.exclude_fnmatch) > 0:
+        vendored_tree_object_name = filter_tree(vendored_tree_object_name, config_item.include_fnmatch, config_item.exclude_fnmatch)
 
     current_complete_tree_object_name = git(
         "write-tree",
         mode="single_line")
 
     if True: # perhaps --no-update-index
-        new_complete_tree_object_name = insert_tree_at_path(current_complete_tree_object_name, vendored_tree_object_name, path_in_repo)
+        new_complete_tree_object_name = insert_tree_at_path(current_complete_tree_object_name, vendored_tree_object_name, config_item.dir)
         git("read-tree",
             new_complete_tree_object_name,
             mode="mutating")
 
     if True: # perhaps --no-update-worktree
+        repo_root = get_repo_root()
+        dir = os.path.join(repo_root, config_item.dir)
         os.makedirs(dir)
         git(
             "--work-tree", dir,
@@ -79,6 +110,266 @@ def do_add(url, ref, dir, include_patterns, exclude_patterns):
             "--source", vendored_tree_object_name,
             ".",
             mode="mutating")
+
+def do_update():
+    sections = read_config_file()
+    for section_index, section in enumerate(sections):
+        pass
+
+class ConfigItem:
+    def __init__(self):
+        self.dir = None
+        self.url = None
+        self.ref = None
+        self.ref_sha1 = None
+        self.include_fnmatch = []
+        self.exclude_fnmatch = []
+config_name_to_field_name = {
+    k.replace("_", "-"): k
+    for k in ConfigItem().__dict__.keys()
+}
+required_config_property_names = ["dir", "url", "ref"]
+config_name_order = ["dir", "url", "ref", "ref-sha1", "include-fnmatch", "exclude-fnmatch"]
+assert set(config_name_order) == set(config_name_to_field_name.keys())
+assert set(required_config_property_names) <= set(config_name_order)
+
+def read_config_file():
+    repo_root = get_repo_root()
+    config_file_path = os.path.join(repo_root, ".git-vendor-config")
+    with open(config_file_path) as f:
+        lines = list(f)
+    if len(lines) == 0:
+        return []
+
+    sections = []
+    current_config_item = ConfigItem()
+    current_config_item_has_any_properties = False
+    def line_error(line_index, msg):
+        sys.exit("{}:{}: error: {}\n{}\n{}".format(
+            os.path.relpath(config_file_path), line_index + 1, msg,
+            lines[line_index].rstrip(),
+            "^" * len(lines[line_index].rstrip()),
+        ))
+    def flush_section(line_index):
+        nonlocal current_config_item_has_any_properties, current_config_item
+        if not current_config_item_has_any_properties:
+            line_error(line_index, "empty section?")
+        for required_property in required_config_property_names:
+            if current_config_item.__dict__[required_property] == None:
+                line_error(line_index, "missing required property: {}".format(required_property))
+        current_config_item.dir
+        sections.append(current_config_item)
+        current_config_item = ConfigItem()
+        current_config_item_has_any_properties = False
+
+    for line_index, line in enumerate(lines):
+        line = line.strip()
+        if line[:1] in ("", "#"):
+            # Blank line or comment.
+            continue
+
+        if line == "---":
+            flush_section(line_index)
+            continue
+
+        try:
+            name, value = line.split("=", 1)
+        except ValueError:
+            line_error(line_index, "Syntax error")
+        name = name.strip()
+        value = value.strip()
+        try:
+            field_name = config_name_to_field_name[name]
+        except KeyError:
+            line_error(line_index, "unrecognized property name: " + repr(name))
+
+        if current_config_item.__dict__[field_name] == None:
+            current_config_item.__dict__[field_name] = value
+        elif type(current_config_item.__dict__[field_name]) == list:
+            current_config_item.__dict__[field_name].append(value)
+        else:
+            line_error(line_index, "scalar property specified more than once: " + repr(name))
+        current_config_item_has_any_properties = True
+
+    flush_section(len(lines) - 1)
+
+    return sections
+
+def edit_config_file(new_config_item, *, section_index=None, insert_new=False):
+    assert section_index != None or insert_new
+    repo_root = get_repo_root()
+    config_file_path = os.path.join(repo_root, ".git-vendor-config")
+    try:
+        with open(config_file_path) as f:
+            lines = list(f)
+    except FileNotFoundError:
+        if not insert_new:
+            raise
+        lines = []
+    if len(lines) == 0:
+        lines = [
+            "# This is a git-vendor config file.",
+            "# For details see https://github.com/thejoshwolfe/git-vendor/blob/main/README.md",
+            "",
+        ]
+
+    theres_at_least_one_section = False
+    current_section_index = 0
+    property_new_line_indexes = collections.defaultdict(list, {
+        # "dir": 3,
+        # "include_fnmatch": [4, 5],
+    })
+    new_lines = []
+    def flush_section():
+        nonlocal current_section_index
+        if current_section_index != section_index:
+            current_section_index += 1
+            return
+        current_section_index += 1
+
+        # These will be sorted backwards, and must be processed in this order:
+        EDIT = -1
+        DELETE = -2
+        INSERT = -3
+        line_edits = [
+            # (index, DELETE),
+            # (index, INSERT or EDIT, line),
+        ]
+        def check_edit_value(line_index, new_value):
+            old_line = new_lines[line_index]
+            old_value_start_index = old_line.index("=") + 1
+            while old_line[old_value_start_index:old_value_start_index+1].isspace():
+                old_value_start_index += 1
+            old_value = old_line[old_value_start_index:].rstrip()
+            if old_value == new_value:
+                # Already correct.
+                return
+            # Edit
+            new_line = old_line[:old_value_start_index] + new_value
+            line_edits.append((line_index, EDIT, new_line))
+        last_seen_property_line = None # Should always be initialized by the required fields.
+        for name in config_name_order:
+            field_name = config_name_to_field_name[name]
+            if new_config_item.__dict__[field_name] == None:
+                # Scalar property shouldn't exist.
+                if field_name in property_new_line_indexes:
+                    line_edits.append((property_new_line_indexes[field_name], DELETE))
+                continue
+            if new_config_item.__dict__[field_name] == []:
+                # List property shouldn't exist.
+                if field_name in property_new_line_indexes:
+                    for line_index in property_new_line_indexes[field_name]:
+                        delete_indexes.extend((line_index, None))
+                continue
+            if type(new_config_item.__dict__[field_name]) == list:
+                # List property should have values.
+                for i in range(max(len(new_config_item.__dict__[field_name]), len(property_new_line_indexes[field_name]))):
+                    if i >= len(new_config_item.__dict__[field_name]):
+                        # Delete extraneous values.
+                        line_edits.append((property_new_line_indexes[field_name][i], DELETE))
+                    elif i >= len(property_new_line_indexes[field_name]):
+                        # Add new values.
+                        line_edits.append((last_seen_property_line + 1, INSERT, "{}={}".format(name, new_config_item.__dict__[field_name][i])))
+                    else:
+                        # Check/edit existing values.
+                        check_edit_value(property_new_line_indexes[field_name][i], new_config_item.__dict__[field_name][i])
+                        last_seen_property_line = property_new_line_indexes[field_name][i]
+            else:
+                # Scalar property should have a value.
+                if field_name in property_new_line_indexes:
+                    # Check/edit existing value.
+                    check_edit_value(property_new_line_indexes[field_name], new_config_item.__dict__[field_name])
+                    # Note that this block of code should execute before any other,
+                    # so this is where this variable gets initialized the first time:
+                    last_seen_property_line = property_new_line_indexes[field_name]
+                else:
+                    # Add new value.
+                    line_edits.append((last_seen_property_line + 1, INSERT, "{}={}".format(name, new_config_item.__dict__[field_name])))
+
+        # Process line edits.
+        for edit in sorted(line_edits, reverse=True):
+            line_index = edit[0]
+            edit_code = edit[1]
+            if edit_code == EDIT:
+                new_lines[line_index] = edit[2]
+            elif edit_code == DELETE:
+                del new_lines[line_index]
+            elif edit_code == INSERT:
+                new_lines[line_index:line_index] = [edit[2]]
+            else: assert False
+
+    for line in lines:
+        if line.lstrip()[:1] in ("", "#"):
+            # Blank line or comment.
+            new_lines.append(line)
+            continue
+
+        if line.strip() == "---":
+            flush_section()
+            new_lines.append(line)
+            continue
+
+        theres_at_least_one_section = True
+        if current_section_index != section_index:
+            # not the section we're looking for
+            new_lines.append(line)
+            continue
+
+        try:
+            name, _ = line.split("=", 1)
+        except ValueError:
+            # i don't care.
+            new_lines.append(line)
+            continue
+        name = name.strip()
+        try:
+            field_name = config_name_to_field_name[name]
+        except KeyError:
+            # i don't care.
+            new_lines.append(line)
+            continue
+        if type(new_config_item.__dict__[field_name]) == list:
+            property_new_line_indexes[field_name].append(len(new_lines))
+        else:
+            property_new_line_indexes[field_name] = len(new_lines)
+        new_lines.append(line)
+
+    flush_section()
+
+    if insert_new:
+        # Create a new section.
+        if theres_at_least_one_section:
+            # Insert a separator.
+            if new_lines[-1] != "":
+                new_lines.append("")
+            new_lines.append("---")
+            new_lines.append("")
+
+        for name in config_name_order:
+            field_name = config_name_to_field_name[name]
+            if new_config_item.__dict__[field_name] in (None, []):
+                continue
+            if type(new_config_item.__dict__[field_name]) == list:
+                for value in new_config_item.__dict__[field_name]:
+                    new_lines.append("{}={}".format(name, value))
+            else:
+                new_lines.append("{}={}".format(name, new_config_item.__dict__[field_name]))
+
+    # Save the file
+    with open(config_file_path, "w") as f:
+        for line in new_lines:
+            f.write(line.rstrip() + "\n")
+
+    if insert_new:
+        # Return the new section_index.
+        if theres_at_least_one_section:
+            return current_section_index
+        else:
+            return 0
+    else:
+        # You already know your section index.
+        return None
+
 
 def insert_tree_at_path(base_tree_object_name, new_tree_object_name, new_tree_subdir_path):
     def recurse(base, subdir_path):
@@ -186,6 +477,12 @@ def get_git_commit_tree_object_name(commit_object_name):
         mode="single_line",
     )
 
+@functools.lru_cache()
+def get_repo_root():
+    return git("rev-parse",
+        "--show-toplevel",
+        mode="single_line")
+
 def git(*args, mode, cwd=".", input=None, output_path=None):
     if type(input) == str:
         input = input.encode("utf8")
@@ -286,6 +583,32 @@ def is_path_within(super_dir, sub_dir):
     super_dir = os.path.abspath(super_dir)
     sub_dir = os.path.abspath(sub_dir)
     return os.path.commonpath([super_dir, sub_dir]).startswith(super_dir)
+
+def validate_url(url):
+    # See `git help fetch` section GIT URLS.
+    if re.match(r'^[a-z+.-]+://.*', url) != None:
+        # Some kind of url. Should be safe to try at least.
+        return
+    if re.match(r'^[A-Za-z0-9._-]+@[^/]+:.*', url) != None:
+        # Looks like "scp-like syntax"
+        return
+
+    if os.path.isabs(url):
+        # Absolute paths work as git repo urls.
+        if os.path.exists(url):
+            warning("Absolute path urls are not portable! (But you probably already knew that.)",
+                "--url={}".format(url))
+            return
+    else:
+        # Relative paths are accepted in some git commands, but they're usually canonicalized to be absolute.
+        # To actually use a relative path url with this program, please just convert it to absolute first.
+        pass
+
+    sys.exit("ERROR: Invalid --url={}".format(url))
+
+def warning(*lines):
+    for line in lines:
+        print("WARNING: " + line, file=sys.stderr, flush=True)
 
 if __name__ == "__main__":
     main()
