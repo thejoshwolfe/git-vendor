@@ -22,7 +22,7 @@ This means that collaborators running `git pull` will always get the content reg
 
 #### [brettlangdon/git-vendor](https://github.com/brettlangdon/git-vendor)
 
-That project is a great start, but it's limited in functionality, written in a language hostile to complexity, and [possibly unmaintained](https://github.com/brettlangdon/git-vendor/issues/16)? In addition, it uses git commit messages as a source of truth for configuration, which does not play well with GutHub projects that require squash-merging all pull requests. I haven't checked to see if there are any performance issues to be worried about when using `git log --grep` to read configuration information, but it smells like the wrong tool for the job.
+That project is a great start, but it's limited in functionality and written in a language hostile to complexity. In addition, it uses git commit messages as a source of truth for configuration, which does not play well with GutHub projects that require squash-merging all pull requests. I haven't checked to see if there are any performance issues to be worried about when using `git log --grep` to read configuration information, but it smells like the wrong tool for the job.
 
 The main issue with that project is simply its missing features. I at least want file name based include/exclude filtering, which optimally[1] involves pretty heavy algorithmic use of `git mktree`, and I have no interest in solving that problem in `sh`. I expect other enthusiasts share my distaste for complex Bash software, so a reimplementation in Python should improve collaboration as a bonus.
 
