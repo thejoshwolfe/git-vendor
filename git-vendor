@@ -48,9 +48,9 @@ def main():
         assert args.ref or args.ref_sha1
         do_add(args.url, args.ref, args.ref_sha1, args.dir, args.include_fnmatch, args.exclude_fnmatch)
     elif args.command == "update":
-        do_update()
+        do_update(args.dir)
     elif args.command in ("ls", "list"):
-        do_list()
+        do_list(args.dir)
     elif args.command in ("rm", "remove"):
         assert args.dir
         do_remove(args.dir)
@@ -81,12 +81,22 @@ def do_add(url, ref, ref_sha1, dir, include_fnmatch, exclude_fnmatch):
 
     download_the_thing(new_config_item, NEW_SECTION)
 
-def do_update():
-    for section_index, config_item in enumerate(read_config_file()):
+def do_update(maybe_dir):
+    if maybe_dir != None:
+        config_item, section_index = find_config_item_by_dir(maybe_dir)
+        the_things = [(section_index, config_item)]
+    else:
+        the_things = enumerate(read_config_file())
+    for section_index, config_item in the_things:
         download_the_thing(config_item, section_index)
 
-def do_list():
-    for config_item in read_config_file():
+def do_list(maybe_dir):
+    if maybe_dir != None:
+        config_item, _ = find_config_item_by_dir(maybe_dir)
+        the_things = [config_item]
+    else:
+        the_things = read_config_file()
+    for config_item in the_things:
         print("{} ({})".format(config_item.dir, config_item.ref))
 
 def do_remove(actual_dir):
