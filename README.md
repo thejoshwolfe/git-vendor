@@ -8,6 +8,7 @@ This means that collaborators running `git pull` will always get the content reg
 
 - [x] Basic initialization and download for a one-time import.
 - [x] Following a branch or other named ref, and checking for and incorporating changes since the last download.
+- [x] Pinning vendored content to a specific commit instead of following a named ref.
 - [x] File name based include/exclude filtering of external content using python's `fnmatch` mechanism.
 - [x] Configuration information stored in a file `.git-vendor-config` in your repo. Automatically gets edited as appropriate while maintaining formatting and comments.
 - [x] Convenient command to support removing vendored content.
