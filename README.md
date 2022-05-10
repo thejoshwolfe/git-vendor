@@ -38,3 +38,11 @@ The next car in the complaining train is that `git submodule update` does not up
 I could go on complaining about how replacing a submodule with a regular directory breaks everyone's `git pull`, or how the hidden content in the `.git/modules` directory will cause subtle errors if you ever try to replace a submodule with another one at the same path, but that's starting to get into niche territory (all of which I have actually run into in a professional environment). The crux of the problem is that git submodules are also functioning git repositories, which introduces tons of complexity unsuitable for a vendoring usecase.
 
 One small advantage of vendoring content over using submodules is the ability to elide unnecessary information: only including the files you want and ignoring the project's history. You might consider this just an optimization, but it's nice to have. This also applies to the vendored content's own git submodules if any; it's common to always include `--recursive` in submodule operations, which means you always get the sub-sub-modules you might not actually need.
+
+#### [ingydotnet/git-subrepo](https://github.com/ingydotnet/git-subrepo)
+
+That tool solves a slightly different problem. `git-subrepo` is close to a feature-equivalent replacement for git submodules with an emphasis on pushing changes as collaborators. By contrast, this tool is more designed for a readonly view of someone else's code only creating patches on rare occasions.
+
+It's great that people are trying to patch the design flaws in git submodules. I'm a fan of the idea of `git-subrepo`. I'm a bit surprised it's implemented in Bash, but that's a small complaint. As far as I can tell that project does not support file name based filtering, which is important for my usecase, but I see something in there about `filter-branch`? Maybe it does support file name based filter; I can't tell.
+
+I haven't researched `git-subrepo` thoroughly; maybe you should use that tool for your usecase depending on what you need.
