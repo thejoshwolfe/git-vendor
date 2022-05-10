@@ -175,7 +175,7 @@ def download_the_thing(config_item, section_index):
         try:
             git("rev-parse",
                 "--verify",
-                config_item.ref_sha1,
+                config_item.ref_sha1 + "^{tree}",
                 suppress_stderr=True,
                 mode="single_line")
         except subprocess.CalledProcessError:
