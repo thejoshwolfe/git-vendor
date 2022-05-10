@@ -24,6 +24,7 @@ def main():
     ])
     parser.add_argument("--dir")
     parser.add_argument("--new-dir")
+    parser.add_argument("--subdir")
     parser.add_argument("--url")
     parser.add_argument("--ref")
     parser.add_argument("--ref-sha1")
@@ -46,7 +47,7 @@ def main():
     if args.command == "add":
         assert args.url and args.dir
         assert args.ref or args.ref_sha1
-        do_add(args.url, args.ref, args.ref_sha1, args.dir, args.include_fnmatch, args.exclude_fnmatch)
+        do_add(args.url, args.ref, args.ref_sha1, args.dir, args.subdir, args.include_fnmatch, args.exclude_fnmatch)
     elif args.command == "update":
         do_update(args.dir)
     elif args.command in ("ls", "list"):
@@ -59,8 +60,10 @@ def main():
         do_rename(args.dir, args.new_dir)
     else: assert False
 
-def do_add(url, ref, ref_sha1, dir, include_fnmatch, exclude_fnmatch):
+def do_add(url, ref, ref_sha1, dir, subdir, include_fnmatch, exclude_fnmatch):
     path_in_repo = validate_dir(dir, "--dir")
+    if subdir != None:
+        subdir = validate_subdir(subdir)
     validate_url(url)
     if ref != None:
         validate_ref(ref)
@@ -74,6 +77,7 @@ def do_add(url, ref, ref_sha1, dir, include_fnmatch, exclude_fnmatch):
     new_config_item.ref = ref
     new_config_item.ref_sha1 = ref_sha1
     new_config_item.dir = path_in_repo
+    new_config_item.subdir = subdir
     if include_fnmatch:
         new_config_item.include_fnmatch = include_fnmatch
     if exclude_fnmatch:
@@ -207,7 +211,21 @@ def download_the_thing(config_item, section_index):
             mode="single_line")
         config_item.ref_sha1 = external_commit_object_name
 
+    # Get vendored tree.
     vendored_tree_object_name = get_git_commit_tree_object_name(config_item.ref_sha1)
+    if config_item.subdir != None:
+        ls_tree_lines = git("ls-tree",
+            "-z", "-d",
+            vendored_tree_object_name,
+            "--",
+            config_item.subdir,
+            mode="null_terminated_lines")
+        if len(ls_tree_lines) == 0:
+            sys.exit("ERROR: not found in external repo: --subdir={}".format(shlex.quote(config_item.subdir)))
+        [ls_tree_line] = ls_tree_lines
+        vendored_tree_object_name = ls_tree_line.split("\t", 1)[0].rsplit(" ", 1)[1]
+
+    # Filter vendored tree.
     if len(config_item.include_fnmatch) + len(config_item.exclude_fnmatch) > 0:
         vendored_tree_object_name = filter_tree(vendored_tree_object_name, config_item.include_fnmatch, config_item.exclude_fnmatch)
 
@@ -264,6 +282,7 @@ class ConfigItem:
         self.url = None
         self.ref = None
         self.ref_sha1 = None
+        self.subdir = None
         self.include_fnmatch = []
         self.exclude_fnmatch = []
 config_name_to_field_name = {
@@ -271,7 +290,7 @@ config_name_to_field_name = {
     for k in ConfigItem().__dict__.keys()
 }
 required_config_property_names = ["dir", "url"]
-config_name_order = ["dir", "url", "ref", "ref-sha1", "include-fnmatch", "exclude-fnmatch"]
+config_name_order = ["dir", "url", "ref", "ref-sha1", "subdir", "include-fnmatch", "exclude-fnmatch"]
 assert set(config_name_order) == set(config_name_to_field_name.keys())
 assert set(required_config_property_names) <= set(config_name_order)
 
@@ -828,6 +847,13 @@ def validate_dir(dir, param_name):
     assert path_in_repo != ".", param_name + " must not be the entire repo"
     assert not os.path.exists(dir), param_name + " already exists"
     return path_in_repo.replace(os.path.sep, "/")
+
+def validate_subdir(subdir):
+    if os.path.isabs(subdir) or os.path.commonpath([subdir, ".."]) == "..":
+        sys.exit("ERROR: Invalid --subdir={}".format(shlex.quote(subdir)))
+    if os.path.normpath(subdir) == ".":
+        return None
+    return os.path.normpath(subdir).replace(os.path.sep, "/")
 
 def validate_url(url):
     # See `git help fetch` section GIT URLS.
