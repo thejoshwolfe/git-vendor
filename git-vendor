@@ -211,23 +211,11 @@ def download_the_thing(config_item, section_index):
             mode="single_line")
         config_item.ref_sha1 = external_commit_object_name
 
-    # Get vendored tree.
+    # Filter vendored tree and inline submodules.
     vendored_tree_object_name = get_git_commit_tree_object_name(config_item.ref_sha1)
-    if config_item.subdir != None:
-        ls_tree_lines = git("ls-tree",
-            "-z", "-d",
-            vendored_tree_object_name,
-            "--",
-            config_item.subdir,
-            mode="null_terminated_lines")
-        if len(ls_tree_lines) == 0:
-            sys.exit("ERROR: not found in external repo: --subdir={}".format(shlex.quote(config_item.subdir)))
-        [ls_tree_line] = ls_tree_lines
-        vendored_tree_object_name = ls_tree_line.split("\t", 1)[0].rsplit(" ", 1)[1]
-
-    # Filter vendored tree.
-    if len(config_item.include_fnmatch) + len(config_item.exclude_fnmatch) > 0:
-        vendored_tree_object_name = filter_tree(vendored_tree_object_name, config_item.include_fnmatch, config_item.exclude_fnmatch)
+    vendored_tree_object_name = filter_tree(
+        vendored_tree_object_name, config_item.subdir,
+        config_item.include_fnmatch, config_item.exclude_fnmatch)
 
     current_complete_tree_object_name = git(
         "write-tree",
@@ -264,6 +252,17 @@ def download_the_thing(config_item, section_index):
             "--source", vendored_tree_object_name,
             ".",
             mode="mutating")
+        # This clean only works because of the `git read-tree` updating the index above.
+        while True:
+            # We have to repeatedly clean in case the first clean deletes a .gitignore file that reveals more untracked content.
+            # Reproduce this scenario by running the following bash command repeatedly:
+            #   echo /a/.gitignore > .gitignore && mkdir a && cd a && cp ../.gitignore .
+            lines = git("clean",
+                "-xffd",
+                actual_dir,
+                mode="newline_terminated_lines")
+            if len(lines) == 0:
+                break
 
         # Also save any changes to the config file, such as ref-sha1 changes.
         edit_config_file(config_item, section_index)
@@ -661,30 +660,86 @@ def insert_tree_at_path(base_tree_object_name, new_tree_object_name, new_tree_su
             mode="single_line")
     return recurse(base_tree_object_name, new_tree_subdir_path)
 
-def filter_tree(tree_object_name, include_patterns, exclude_patterns):
+def filter_tree(tree_object_name, start_at_subdir, include_patterns, exclude_patterns):
+    if start_at_subdir != None:
+        ls_tree_lines = git("ls-tree",
+            "-z", "-d",
+            tree_object_name,
+            "--",
+            start_at_subdir,
+            mode="null_terminated_lines")
+        if len(ls_tree_lines) == 0:
+            sys.exit("ERROR: not found in external repo: --subdir={}".format(shlex.quote(start_at_subdir)))
+        [ls_tree_line] = ls_tree_lines
+        tree_object_name = ls_tree_line.split("\t", 1)[0].rsplit(" ", 1)[1]
+
     depth_to_parent_to_ls_tree_lines = collections.defaultdict(lambda: collections.defaultdict(list), {
         # 3: {"a/b/c": ["100644 blob 615a35da50b4aa9c4525e26aba1cd830010e4e46\t.gitignore"]},
     })
 
-    # Filter the items.
-    for ls_tree_line in git("ls-tree",
-        "--full-tree", "-r",
-        "-z",
-        tree_object_name,
-        mode="null_terminated_lines",
-    ):
-        stuff, name = ls_tree_line.split("\t", 1)
-        if len(include_patterns) > 0:
-            if not any(fnmatch.fnmatch(name, pattern) for pattern in include_patterns):
+    def recurse(tree_object_name, submodule_path):
+        submodule_path_to_url = None # filled in lazily.
+        for ls_tree_line in git("ls-tree",
+            "--full-tree", "-r",
+            "-z",
+            tree_object_name,
+            mode="null_terminated_lines",
+        ):
+            stuff, name = ls_tree_line.split("\t", 1)
+            mode_and_type, object_name = stuff.rsplit(" ", 1)
+            if submodule_path != None:
+                # This is *not* an os path, so don't use os.path.join. It must use forward slashes.
+                full_path = submodule_path + "/" + name
+            else:
+                full_path = name
+            if len(include_patterns) > 0 and not any(fnmatch.fnmatch(full_path, pattern) for pattern in include_patterns):
                 continue
-        if len(exclude_patterns) > 0:
-            if any(fnmatch.fnmatch(name, pattern) for pattern in exclude_patterns):
+            if any(fnmatch.fnmatch(full_path, pattern) for pattern in exclude_patterns):
                 continue
-        if "/" in name:
-            parent, child = name.rsplit("/", 1)
-            depth_to_parent_to_ls_tree_lines[len(parent.split("/"))][parent].append("{}\t{}".format(stuff, child))
-        else:
-            depth_to_parent_to_ls_tree_lines[0][""].append(ls_tree_line)
+            if mode_and_type == "160000 commit":
+                # Inline submoudle.
+                try:
+                    # Resolve commit to a tree.
+                    object_name = git("rev-parse",
+                        "--verify",
+                        object_name + "^{tree}",
+                        suppress_stderr=True,
+                        mode="single_line")
+                except subprocess.CalledProcessError:
+                    # Need to fetch.
+                    if submodule_path_to_url == None:
+                        submodule_path_to_url = parse_submodule_path_to_url_from_gitmodules_config_content(
+                            git("cat-file",
+                                "blob",
+                                "{}:.gitmodules".format(tree_object_name),
+                                mode="raw_bytes"),
+                        )
+                    external_ref_local_name = "refs/vendor/fetch_head"
+                    git("fetch",
+                        "--no-tags", "--force",
+                        "--depth", "1",
+                        submodule_path_to_url[name],
+                        "{}:{}".format(object_name, external_ref_local_name),
+                        mode="inherit_stdout")
+                    # Try again to resolve the commit to a tree.
+                    object_name = git("rev-parse",
+                        "--verify",
+                        object_name + "^{tree}",
+                        mode="single_line")
+                recurse(object_name, name)
+                continue
+            # Keep this blob.
+            assert mode_and_type in (
+                "100644 blob", # non-executable file
+                "100755 blob", # executable file
+                "120000 blob", # symlink
+            )
+            if "/" in full_path:
+                parent, child = full_path.rsplit("/", 1)
+                depth_to_parent_to_ls_tree_lines[len(parent.split("/"))][parent].append("{}\t{}".format(stuff, child))
+            else:
+                depth_to_parent_to_ls_tree_lines[0][""].append(ls_tree_line)
+    recurse(tree_object_name, None)
 
     # Build new trees from leaves up.
     root_tree = None
@@ -726,6 +781,52 @@ def get_git_commit_tree_object_name(commit_object_name):
         commit_object_name + "^{tree}",
         mode="single_line",
     )
+
+def parse_submodule_path_to_url_from_gitmodules_config_content(content_bytes):
+    path_configs = {
+        # For this file content:
+        #     [submodule "foo"]
+        #         path = vendor/foo
+        # We get this entry:
+        # "foo": "vendor/foo",
+    }
+    url_configs = {
+        # For this file content:
+        #     [submodule "foo"]
+        #         url = https://foo.com/
+        # We get this entry:
+        # "foo": "https://foo.com/",
+    }
+    for line in git("config",
+        "-z", "--list",
+        "-f", "-",
+        input=content_bytes,
+        mode="null_terminated_lines",
+    ):
+        # Format of config -z --list is:
+        #   <name>\n<value>\x00
+        name, value = line.split("\n", 1)
+        # Format of <name> is:
+        #   <section>.<almost-any-string>.<field>
+        # Note that <almost-any-string> can contain ".", but not "\n" or "\x00".
+        try:
+            section, name = name.split(".", 1)
+            if section != "submodule":
+                continue
+            name, field = name.rsplit(".", 1)
+        except ValueError:
+            # Alternate formats for <name> include:
+            #   <section>.<field>
+            continue
+        if field == "path":
+            path_configs[name] = value
+        elif field == "url":
+            url_configs[name] = value
+        # Ignore other submodule fields such as "update", "branch", etc.
+    return {
+        path_configs[name]: url_configs[name]
+        for name in path_configs.keys() & url_configs.keys()
+    }
 
 @functools.lru_cache()
 def get_repo_root():

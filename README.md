@@ -13,11 +13,13 @@ This means that collaborators running `git pull` will always get the content reg
 - [x] Configuration information stored in a file `.git-vendor-config` in your repo. Automatically gets edited as appropriate while maintaining formatting and comments.
 - [x] Convenient command to support removing vendored content.
 - [x] Convenient command to support renaming/moving local vendored content.
+- [ ] Convenient command to support editing the config file. Validation for a manually edited config file.
 - [x] Vendoring a subdirectory instead of the entire project's directory structure. E.g. with `--dir=vendor/foo --subdir=src`, the external file `src/bar.txt` in your project becomes as `vendor/foo/bar.txt` with no `src` component.
+- [x] Support for also vendoring the submodules of a vendored project while following the proper commit pointers.
 - [ ] Noticing local changes applied to the external content, and facilitating pushing the changes somewhere.
 - [ ] Maintaining local changes that are not intended to be pushed (other than the include/exclude filters above), and facilitating pushing without these local edits. This could be patches to file contents or file renames perhaps.
 - [ ] Proper documentation for command line interface and config file.
-- [ ] Support for also vendoring the submodules of a vendored project while following the proper commit pointers.
+- [ ] Unit tests for corner case error handling. (Code coverage?)
 
 ## git-vendor vs other options
 
