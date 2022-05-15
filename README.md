@@ -1,8 +1,16 @@
 # git-vendor
 
-Manage external git content in your repo.
+Manage external git content in your git repo.
 This is like git submodules, but all the content is integrated into your content as though you copy-pasted it all into a directory.
 This means that collaborators running `git pull` will always get the content regardless of any follow-up `git submodule update --init --recrusive` or whatever.
+
+The main advantage of using `git-vendor` over other solutions (as of writing this), is that you can customize the vendored content via filtering and patching, and these transformations are maintained while updating the vendored content (TODO: implement these features; see Status below.).
+
+Example use cases:
+
+* You depend on an open source library (or a specific version of it) that isn't available in your system package manager. You opt to simply copy paste the entire source code that you need into your project.
+* You find a bug in an open source library you depend on. You try submitting a patch to the maintainers, but they don't accept it for whatever reason. You decide to copy paste the entire source code for that project into your repository so you can apply the patch you need.
+* Your organization maintains code in several repositories. An API schema in a server's repo is also needed to build a client in a different repo. Currently the client repo adds the entire server's codebase as a git submodule to just have access to the API schema, but that dependency is slowing down and complicating your CI/CD pipelines as well as straining the Principle of Least Privilege. You're considering just copy pasting the API schemas alone into your client repos, but that would make it tricky to keep the content up to date with the latest changes.
 
 ## Status
 
@@ -20,6 +28,7 @@ This means that collaborators running `git pull` will always get the content reg
 - [ ] Maintaining local changes that are not intended to be pushed (other than the include/exclude filters above), and facilitating pushing without these local edits. This could be patches to file contents or file renames perhaps.
 - [ ] Proper documentation for command line interface and config file.
 - [ ] Unit tests for corner case error handling. (Code coverage?)
+- [ ] Support for non-utf8 file names. (This means proper juggling of bytes vs strings in Python 3; currently the code assumes everything is valid utf8 and converts it all to `str` for convenience.)
 
 ## git-vendor vs other options
 
@@ -27,7 +36,7 @@ This means that collaborators running `git pull` will always get the content reg
 
 That project is a great start, but it's limited in functionality and written in a language hostile to complexity. In addition, it uses git commit messages as a source of truth for configuration, which does not play well with GutHub projects that require squash-merging all pull requests. I haven't checked to see if there are any performance issues to be worried about when using `git log --grep` to read configuration information, but it smells like the wrong tool for the job.
 
-The main issue with that project is simply its missing features. I at least want file name based include/exclude filtering, which optimally[1] involves pretty heavy algorithmic use of `git mktree`, and I have no interest in solving that problem in `sh`. I expect other enthusiasts share my distaste for complex Bash software, so a reimplementation in Python should improve collaboration as a bonus.
+The main issue with that project is simply its missing features. I at least want file name based include/exclude filtering, which optimally[1] involves pretty heavy algorithmic use of `git mktree`, and I have no interest in solving that problem in `sh`. Although the code in that project appears to be very high quality and well maintained software, I expect that a reimplementation in a more popular programming language (in this case Python) will improve collaboration.
 
 [1] It's possible to use simple `git add -A` on local file system content instead of fancy `mktree` algorithms, but that involves multiple additional moving parts and opportunities for things to go wrong and be surprising. For example, your global ignore rules might prevent some of the content from getting added, or the file system's case insensitivity or unicode normalization might cause surprises. In terms of what actually happens between these two approaches, `git add` seems simple at first, but `mktree` is more correct.
 
@@ -35,16 +44,16 @@ The main issue with that project is simply its missing features. I at least want
 
 For some reason, the command line user experience of git submodules is seemingly designed to be atrocious. Just to start off the complaining train, `git status` does not warn you about uninitialized submodules someone else has added to your project. (And the default behavior of `git clone` does not initialize submodules.) This simple problem accounts for about 60% of the wasted time debugging why "something's wrong" with a repository in my experience.
 
-The next car in the complaining train is that `git submodule update` does not update submodules. Whenever I tell a colleague at work to "update the submodule to the latest version", I have to remember to clarify that this does not mean `git submodule update`. There doesn't seem to be any first-class mechanism built into git to update a submodule to point to the latest content pointed to by a named ref, such as the `main` branch of the external repo. The simplest command I've found to do this is: `(cd path/to/submodule && git fetch && git checkout origin/main) && git add path/to/submodule`. Is that really the best we can do?
+The next car in the complaining train is that `git submodule update` does not update submodules. Whenever I tell a colleague at work to "update the submodule to the latest version", I have to remember to clarify that this does not mean `git submodule update`. There doesn't seem to be any first-class mechanism built into git to update a submodule to point to the latest content pointed to by a named ref, such as the `main` branch of the external repo. The simplest command I've found to do this is: `(cd path/to/submodule && git fetch && git checkout origin/main) && git add path/to/submodule`. Is that really the best we can do? *UPDATE*: I've just discovered the `--branch` and `--remote` options in `git help submodule`. I have yet to try them, but they claim to do exactly what I'm asking for here.
 
 I could go on complaining about how replacing a submodule with a regular directory breaks everyone's `git pull`, or how the hidden content in the `.git/modules` directory will cause subtle errors if you ever try to replace a submodule with another one at the same path, but that's starting to get into niche territory (all of which I have actually run into in a professional environment). The crux of the problem is that git submodules are also functioning git repositories, which introduces tons of complexity unsuitable for a vendoring usecase.
 
-One small advantage of vendoring content over using submodules is the ability to elide unnecessary information: only including the files you want and ignoring the project's history. You might consider this just an optimization, but it's nice to have. This also applies to the vendored content's own git submodules if any; it's common to always include `--recursive` in submodule operations, which means you always get the sub-sub-modules you might not actually need.
+If you were to try to solve the filtering and patching use case with a submodule, it would probably come in the form of a commit that applies the changes you want. This probably means forking the dependency under your own user/organization/server and pushing one or more commits. When new changes are made to the third-party content, you would probably try doing a merge between their changes and your patch. However, if your real intention is to *ignore* the content of the `examples/` directory, for example, then a commit that deletes all the content there is the wrong tool for the job. That commit would cause a merge conflict when anything in the content is changed, and would completely miss new additions to the directory. This is an example of how file name based filtering better expresses intent, and is more suitable to the vendoring use case.
 
 #### [ingydotnet/git-subrepo](https://github.com/ingydotnet/git-subrepo)
 
-That tool solves a slightly different problem. `git-subrepo` is close to a feature-equivalent replacement for git submodules with an emphasis on pushing changes as collaborators. By contrast, this tool is more designed for a readonly view of someone else's code only creating patches on rare occasions.
+That tool solves a slightly different problem. `git-subrepo` is close to a feature-equivalent replacement for git submodules with an emphasis on pushing changes as collaborators. By contrast, `git-vendor` is more designed for a readonly view of someone else's code only upstreaming patches on rare occasions.
 
-It's great that people are trying to patch the design flaws in git submodules. I'm a fan of the idea of `git-subrepo`. I'm a bit surprised it's implemented in Bash, but that's a small complaint. As far as I can tell that project does not support file name based filtering, which is important for my usecase, but I see something in there about `filter-branch`? Maybe it does support file name based filter; I can't tell.
+It's great that people are trying to patch the design flaws in git submodules. I'm a fan of the idea of `git-subrepo`. I'm a bit surprised it's implemented in Bash, but that's a small complaint. As far as I can tell that project does not support file name based filtering, which is important for my usecase, but I see something in there about `filter-branch`? Maybe it does support file name based filtering; I can't tell.
 
 I haven't researched `git-subrepo` thoroughly; maybe you should use that tool for your usecase depending on what you need.
