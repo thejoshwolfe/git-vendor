@@ -30,6 +30,7 @@ def main():
     parser.add_argument("--ref-sha1")
     parser.add_argument("--include-fnmatch", action="append")
     parser.add_argument("--exclude-fnmatch", action="append")
+    parser.add_argument("--allow-dir-exists", action="store_true")
 
     args = parser.parse_args()
     if args.verbose:
@@ -47,7 +48,7 @@ def main():
     if args.command == "add":
         assert args.url and args.dir
         assert args.ref or args.ref_sha1
-        do_add(args.url, args.ref, args.ref_sha1, args.dir, args.subdir, args.include_fnmatch, args.exclude_fnmatch)
+        do_add(args.url, args.ref, args.ref_sha1, args.dir, args.subdir, args.include_fnmatch, args.exclude_fnmatch, args.allow_dir_exists)
     elif args.command == "update":
         do_update(args.dir)
     elif args.command in ("ls", "list"):
@@ -57,11 +58,11 @@ def main():
         do_remove(args.dir)
     elif args.command in ("mv", "rename"):
         assert args.dir and args.new_dir
-        do_rename(args.dir, args.new_dir)
+        do_rename(args.dir, args.new_dir, args.allow_dir_exists)
     else: assert False
 
-def do_add(url, ref, ref_sha1, dir, subdir, include_fnmatch, exclude_fnmatch):
-    path_in_repo = validate_dir(dir, "--dir")
+def do_add(url, ref, ref_sha1, dir, subdir, include_fnmatch, exclude_fnmatch, allow_dir_exists):
+    path_in_repo = validate_dir(dir, "--dir", allow_dir_exists)
     if subdir != None:
         subdir = validate_subdir(subdir)
     validate_url(url)
@@ -125,9 +126,9 @@ def do_remove(actual_dir):
         print("")
         print("Use \"git commit\" to proceed with the commit.")
 
-def do_rename(actual_dir, actual_new_dir):
+def do_rename(actual_dir, actual_new_dir, allow_dir_exists):
     config_item, section_index = find_config_item_by_dir(actual_dir)
-    config_item.dir = validate_dir(actual_new_dir, "--new-dir")
+    config_item.dir = validate_dir(actual_new_dir, "--new-dir", allow_dir_exists)
     edit_config_file(config_item, section_index)
 
     # Trailing slashes on this parameter ruin everything.
@@ -941,12 +942,13 @@ def is_path_within(super_dir, sub_dir):
     sub_dir = os.path.abspath(sub_dir)
     return os.path.commonpath([super_dir, sub_dir]).startswith(super_dir)
 
-def validate_dir(dir, param_name):
+def validate_dir(dir, param_name, allow_dir_exists):
     repo_root = get_repo_root()
     assert is_path_within(repo_root, dir), param_name + " is outside the git repo"
     path_in_repo = os.path.relpath(dir, repo_root)
     assert path_in_repo != ".", param_name + " must not be the entire repo"
-    assert not os.path.exists(dir), param_name + " already exists"
+    if not allow_dir_exists:
+        assert not os.path.exists(dir), param_name + " already exists. try giving --allow-dir-exists."
     return path_in_repo.replace(os.path.sep, "/")
 
 def validate_subdir(subdir):

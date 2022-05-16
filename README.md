@@ -16,8 +16,10 @@ Example use cases:
 
 - [x] Basic initialization and download for a one-time import.
 - [x] Following a branch or other named ref, and checking for and incorporating changes since the last download.
+    - [ ] Switch from the generically configured `--ref` to specifically `--branch` or `--tag`, the difference being that `--tag` is assumed to never need to be re-fetched, skipping the `git ls-remote` call to the server.
 - [x] Pinning vendored content to a specific commit instead of following a named ref.
 - [x] File name based include/exclude filtering of external content using python's `fnmatch` mechanism.
+    - [ ] Switch from python's `fnmatch` mechanism to a more familiar syntax like `.gitignore` or github's `CODEOWNERS` mechanism.
 - [x] Configuration information stored in a file `.git-vendor-config` in your repo. Automatically gets edited as appropriate while maintaining formatting and comments.
 - [x] Convenient command to support removing vendored content.
 - [x] Convenient command to support renaming/moving local vendored content.
@@ -28,7 +30,7 @@ Example use cases:
 - [ ] Maintaining local changes that are not intended to be pushed (other than the include/exclude filters above), and facilitating pushing without these local edits. This could be patches to file contents or file renames perhaps.
 - [ ] Proper documentation for command line interface and config file.
 - [ ] Unit tests for corner case error handling. (Code coverage?)
-- [ ] Support for non-utf8 file names. (This means proper juggling of bytes vs strings in Python 3; currently the code assumes everything is valid utf8 and converts it all to `str` for convenience.)
+- [ ] Support for non-utf8 file names. (This means proper juggling of bytes vs strings in Python 3; currently the code assumes everything is valid utf8 and converts it all to `str` for convenience. Alas, Python 2's str would have actually worked better; see [utf8everywhere.org](https://utf8everywhere.org/).)
 
 ## git-vendor vs other options
 
