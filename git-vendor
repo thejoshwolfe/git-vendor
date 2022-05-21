@@ -21,6 +21,7 @@ def main():
         "ls", "list",
         "rm", "remove",
         "mv", "rename",
+        "save-edits", "save-patch",
     ])
     parser.add_argument("--dir")
     parser.add_argument("--new-dir")
@@ -59,6 +60,9 @@ def main():
     elif args.command in ("mv", "rename"):
         assert args.dir and args.new_dir
         do_rename(args.dir, args.new_dir, args.allow_dir_exists)
+    elif args.command in ("save-edits", "save-patch"):
+        assert args.dir
+        do_save_patch(args.dir)
     else: assert False
 
 def do_add(url, ref, ref_sha1, dir, subdir, include_fnmatch, exclude_fnmatch, allow_dir_exists):
@@ -155,6 +159,37 @@ def do_rename(actual_dir, actual_new_dir, allow_dir_exists):
         print("")
         print("Use \"git commit\" to proceed with the commit.")
 
+def do_save_patch(actual_dir):
+    config_item, section_index = find_config_item_by_dir(actual_dir)
+    repo_root = get_repo_root()
+
+    dirty_lines = git("status",
+        "-z",
+        "--",
+        config_item.dir,
+        cwd=repo_root,
+        mode="null_terminated_lines")
+    for porcelain_status_line in dirty_lines:
+        worktree_status_code = porcelain_status_line[1]
+        if worktree_status_code != " ":
+            sys.exit("\n".join("ERROR: " + line for line in [
+                "There are unstaged changes in: " + shlex.quote(actual_dir),
+                "Use \"git add\" to stage the changes, then re-run this command."
+            ]))
+    new_tree_object_name = git("write-tree",
+        "--prefix", config_item.dir,
+        mode="single_line")
+
+    # Compute the post-filter pre-patch tree.
+    fetch_and_set_ref_sha1(config_item, refresh_ref=False)
+    old_tree_object_name = filter_tree(
+        get_git_commit_tree_object_name(config_item.ref_sha1), config_item.subdir,
+        config_item.include_fnmatch, config_item.exclude_fnmatch)
+
+    config_item.tree_patch = "{}:{}".format(old_tree_object_name, new_tree_object_name)
+    edit_config_file(config_item, section_index)
+
+
 def find_config_item_by_dir(actual_dir):
     repo_root = get_repo_root()
     path_in_repo = os.path.normpath(os.path.relpath(actual_dir, repo_root)).replace(os.path.sep, "/")
@@ -166,7 +201,8 @@ def find_config_item_by_dir(actual_dir):
         "tip: try \"git-vendor list\"",
     ]))
 
-def download_the_thing(config_item, section_index):
+def fetch_and_set_ref_sha1(config_item, *, refresh_ref):
+    """ fetches the third-party data if necessary, and sets config_item.ref_sha1 to the resolved object name """
 
     # Fetch the latest external info.
     def should_fetch():
@@ -174,7 +210,7 @@ def download_the_thing(config_item, section_index):
         # So first check if we would fetch anything, then do the fetch.
         if config_item.ref_sha1 == None:
             return True
-        if config_item.ref != None:
+        if refresh_ref and config_item.ref != None:
             # Following a named ref. Check for updates to the named ref.
             remote_lines = git("ls-remote",
                 config_item.url,
@@ -212,15 +248,22 @@ def download_the_thing(config_item, section_index):
             mode="single_line")
         config_item.ref_sha1 = external_commit_object_name
 
-    # Filter vendored tree and inline submodules.
-    vendored_tree_object_name = get_git_commit_tree_object_name(config_item.ref_sha1)
-    vendored_tree_object_name = filter_tree(
-        vendored_tree_object_name, config_item.subdir,
-        config_item.include_fnmatch, config_item.exclude_fnmatch)
+def download_the_thing(config_item, section_index):
+    fetch_and_set_ref_sha1(config_item, refresh_ref=True)
 
-    current_complete_tree_object_name = git(
-        "write-tree",
-        mode="single_line")
+    # Filter vendored tree and inline submodules.
+    vendored_tree_object_name = filter_tree(
+        get_git_commit_tree_object_name(config_item.ref_sha1), config_item.subdir,
+        config_item.include_fnmatch, config_item.exclude_fnmatch)
+    # Apply patches.
+    if config_item.tree_patch != None:
+        old_tree_object_name, new_tree_object_name = config_item.tree_patch.split(":")
+        if vendored_tree_object_name == old_tree_object_name:
+            vendored_tree_object_name = new_tree_object_name
+        else:
+            raise NotImplementedError("TODO: implement patching after an update")
+
+    current_complete_tree_object_name = git("write-tree", mode="single_line")
     new_complete_tree_object_name = insert_tree_at_path(current_complete_tree_object_name, vendored_tree_object_name, config_item.dir)
     if current_complete_tree_object_name == new_complete_tree_object_name:
         # Already up to date.
@@ -285,12 +328,13 @@ class ConfigItem:
         self.subdir = None
         self.include_fnmatch = []
         self.exclude_fnmatch = []
+        self.tree_patch = None
 config_name_to_field_name = {
     k.replace("_", "-"): k
     for k in ConfigItem().__dict__.keys()
 }
 required_config_property_names = ["dir", "url"]
-config_name_order = ["dir", "url", "ref", "ref-sha1", "subdir", "include-fnmatch", "exclude-fnmatch"]
+config_name_order = ["dir", "url", "ref", "ref-sha1", "subdir", "include-fnmatch", "exclude-fnmatch", "tree-patch"]
 assert set(config_name_order) == set(config_name_to_field_name.keys())
 assert set(required_config_property_names) <= set(config_name_order)
 
