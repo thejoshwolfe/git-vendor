@@ -4,6 +4,7 @@ import os, sys, re
 import subprocess, shlex
 import fnmatch
 import collections, functools
+import tempfile
 
 class CliOptions:
     verbose = False
@@ -21,6 +22,7 @@ def main():
         "ls", "list",
         "rm", "remove",
         "mv", "rename",
+        "save-edits", "save-patch",
     ])
     parser.add_argument("--dir")
     parser.add_argument("--new-dir")
@@ -59,6 +61,9 @@ def main():
     elif args.command in ("mv", "rename"):
         assert args.dir and args.new_dir
         do_rename(args.dir, args.new_dir, args.allow_dir_exists)
+    elif args.command in ("save-edits", "save-patch"):
+        assert args.dir
+        do_save_patch(args.dir)
     else: assert False
 
 def do_add(url, ref, ref_sha1, dir, subdir, include_fnmatch, exclude_fnmatch, allow_dir_exists):
@@ -155,6 +160,54 @@ def do_rename(actual_dir, actual_new_dir, allow_dir_exists):
         print("")
         print("Use \"git commit\" to proceed with the commit.")
 
+def do_save_patch(actual_dir):
+    config_item, section_index = find_config_item_by_dir(actual_dir)
+    repo_root = get_repo_root()
+
+    dirty_lines = git("status",
+        "-z",
+        "--",
+        config_item.dir,
+        cwd=repo_root,
+        mode="null_terminated_lines")
+    for porcelain_status_line in dirty_lines:
+        worktree_status_code = porcelain_status_line[1]
+        if worktree_status_code != " ":
+            sys.exit("\n".join("ERROR: " + line for line in [
+                "There are unstaged changes in: " + shlex.quote(actual_dir),
+                "Use \"git add\" to stage the changes, then re-run this command."
+            ]))
+    new_tree_object_name = git("write-tree",
+        "--prefix", config_item.dir,
+        mode="single_line")
+
+    # Compute the post-filter pre-patch tree.
+    fetch_and_set_ref_sha1(config_item, refresh_ref=False)
+    old_tree_object_name = filter_tree(
+        get_git_commit_tree_object_name(config_item.ref_sha1), config_item.subdir,
+        config_item.include_fnmatch, config_item.exclude_fnmatch)
+
+    new_tree_patch = "{}:{}".format(old_tree_object_name, new_tree_object_name)
+    if config_item.tree_patch == new_tree_patch:
+        # Already up to date.
+        print("Already up to date.")
+        return
+
+    config_item.tree_patch = new_tree_patch
+    edit_config_file(config_item, section_index)
+
+    # Tell the user to proceed with a git commit.
+    if CliOptions.dry_run:
+        print("")
+    print("Changes staged to be committed:")
+    git("diff",
+        "--cached", "--shortstat",
+        mode="inherit_stdout")
+    print("")
+    if not CliOptions.dry_run:
+        print("Use \"git commit\" to proceed with the commit.")
+
+
 def find_config_item_by_dir(actual_dir):
     repo_root = get_repo_root()
     path_in_repo = os.path.normpath(os.path.relpath(actual_dir, repo_root)).replace(os.path.sep, "/")
@@ -166,61 +219,69 @@ def find_config_item_by_dir(actual_dir):
         "tip: try \"git-vendor list\"",
     ]))
 
-def download_the_thing(config_item, section_index):
-
-    # Fetch the latest external info.
-    def should_fetch():
+def fetch_and_set_ref_sha1(config_item, *, refresh_ref):
+    """ fetches the third-party data if necessary, and sets config_item.ref_sha1 to the resolved object name """
+    if config_item.ref == None:
+        # There's no named ref to follow.
+        should_reresolve_named_ref = False
+    elif config_item.ref_sha1 == None:
+        # The named ref has never been resolved.
+        should_reresolve_named_ref = True
+    else:
+        # Reresolve depending on which operation we're doing.
+        should_reresolve_named_ref = refresh_ref
+    if should_reresolve_named_ref:
+        # Check for updates to the named ref.
         # We'd like to just fetch, but `git fetch` produces trash output when there's nothing to do.
         # So first check if we would fetch anything, then do the fetch.
-        if config_item.ref_sha1 == None:
-            return True
-        if config_item.ref != None:
-            # Following a named ref. Check for updates to the named ref.
-            remote_lines = git("ls-remote",
-                config_item.url,
-                config_item.ref,
-                mode="newline_terminated_lines")
-            if len(remote_lines) != 1:
-                # Ref is deleted? Let's let `git fetch` report the error.
-                config_item.ref_sha1 = None
-                return True
-            # e.g. "615624c2c2cfbed7e30a158493b704231b14ff8e\trefs/heads/main"
-            config_item.ref_sha1 = remote_lines[0].split("\t", 1)[0]
-            # We might save this edit depending on later logic.
-        try:
-            git("rev-parse",
-                "--verify",
-                config_item.ref_sha1 + "^{tree}",
-                suppress_stderr=True,
-                mode="single_line")
-        except subprocess.CalledProcessError:
-            # We've never fetched the object, or maybe it's been gc'ed.
-            return True
-        return False
-    if should_fetch():
-        external_ref_local_name = "refs/vendor/fetch_head"
-        git("fetch",
-            "--no-tags", "--force",
-            "--depth", "1",
+        remote_lines = git("ls-remote",
             config_item.url,
-            "{}:{}".format(config_item.ref_sha1 or config_item.ref, external_ref_local_name),
-            mode="inherit_stdout")
+            config_item.ref,
+            mode="newline_terminated_lines")
+        if len(remote_lines) != 1:
+            # Ref is deleted? Let's let `git fetch` report the error.
+            git_fetch_to_cache(config_item.url, config_item.ref)
+            assert False, "Expected ls-remote and fetch to agree on the non-existence of ref: " + config_item.ref
+        # e.g. "615624c2c2cfbed7e30a158493b704231b14ff8e\trefs/heads/main"
+        config_item.ref_sha1 = remote_lines[0].split("\t", 1)[0]
+        # We might save this edit depending on later logic.
 
-        external_commit_object_name = git("rev-parse",
-            "--verify",
-            external_ref_local_name,
-            mode="single_line")
-        config_item.ref_sha1 = external_commit_object_name
+    # Verify that we actually have the commit cached.
+    if git_object_exists(config_item.ref_sha1 + "^{tree}"):
+        return
+
+    # Recache the commit.
+    git_fetch_to_cache(config_item.url, config_item.ref_sha1)
+
+def download_the_thing(config_item, section_index):
+    old_ref_sha1 = config_item.ref_sha1
+    fetch_and_set_ref_sha1(config_item, refresh_ref=True)
 
     # Filter vendored tree and inline submodules.
-    vendored_tree_object_name = get_git_commit_tree_object_name(config_item.ref_sha1)
     vendored_tree_object_name = filter_tree(
-        vendored_tree_object_name, config_item.subdir,
+        get_git_commit_tree_object_name(config_item.ref_sha1), config_item.subdir,
         config_item.include_fnmatch, config_item.exclude_fnmatch)
+    # Apply patches.
+    if config_item.tree_patch != None:
+        old_tree_object_name, new_tree_object_name = config_item.tree_patch.split(":")
+        if vendored_tree_object_name == old_tree_object_name:
+            vendored_tree_object_name = new_tree_object_name
+        else:
+            # We need to merge the patches with the new changes.
+            # Make sure we have the old tree fetched and cached. It may have been gc'ed.
+            if not git_object_exists(old_tree_object_name + "^{tree}"):
+                git_fetch_to_cache(config_item.url, old_ref_sha1)
 
-    current_complete_tree_object_name = git(
-        "write-tree",
-        mode="single_line")
+            pre_patch_tree_object_name = vendored_tree_object_name
+            vendored_tree_object_name = apply_tree_patch(vendored_tree_object_name, old_tree_object_name, new_tree_object_name)
+            if pre_patch_tree_object_name == vendored_tree_object_name:
+                # The upstream has merged all the changes.
+                config_item.tree_patch = None
+            else:
+                # Update the tree patch for the new commit.
+                config_item.tree_patch = "{}:{}".format(pre_patch_tree_object_name, vendored_tree_object_name)
+
+    current_complete_tree_object_name = git("write-tree", mode="single_line")
     new_complete_tree_object_name = insert_tree_at_path(current_complete_tree_object_name, vendored_tree_object_name, config_item.dir)
     if current_complete_tree_object_name == new_complete_tree_object_name:
         # Already up to date.
@@ -285,12 +346,13 @@ class ConfigItem:
         self.subdir = None
         self.include_fnmatch = []
         self.exclude_fnmatch = []
+        self.tree_patch = None
 config_name_to_field_name = {
     k.replace("_", "-"): k
     for k in ConfigItem().__dict__.keys()
 }
 required_config_property_names = ["dir", "url"]
-config_name_order = ["dir", "url", "ref", "ref-sha1", "subdir", "include-fnmatch", "exclude-fnmatch"]
+config_name_order = ["dir", "url", "ref", "ref-sha1", "subdir", "include-fnmatch", "exclude-fnmatch", "tree-patch"]
 assert set(config_name_order) == set(config_name_to_field_name.keys())
 assert set(required_config_property_names) <= set(config_name_order)
 
@@ -709,19 +771,14 @@ def filter_tree(tree_object_name, start_at_subdir, include_patterns, exclude_pat
                 except subprocess.CalledProcessError:
                     # Need to fetch.
                     if submodule_path_to_url == None:
+                        # Need to parse .gitmodules file.
                         submodule_path_to_url = parse_submodule_path_to_url_from_gitmodules_config_content(
                             git("cat-file",
                                 "blob",
                                 "{}:.gitmodules".format(tree_object_name),
                                 mode="raw_bytes"),
                         )
-                    external_ref_local_name = "refs/vendor/fetch_head"
-                    git("fetch",
-                        "--no-tags", "--force",
-                        "--depth", "1",
-                        submodule_path_to_url[name],
-                        "{}:{}".format(object_name, external_ref_local_name),
-                        mode="inherit_stdout")
+                    git_fetch_to_cache(submodule_path_to_url[name], object_name)
                     # Try again to resolve the commit to a tree.
                     object_name = git("rev-parse",
                         "--verify",
@@ -775,6 +832,185 @@ def filter_tree(tree_object_name, start_at_subdir, include_patterns, exclude_pat
     assert root_tree != None
     return root_tree
 
+def apply_tree_patch(base_tree_object_name, old_tree_object_name, new_tree_object_name):
+    def read_tree(tree_object_name):
+        name_to_stuff = {
+            # "path/to/foo.txt", "100644 blob 225788ba527ad53693819c1945849451d80beda3"
+        }
+        for line in git("ls-tree",
+            "--full-tree", "-r",
+            "-z",
+            tree_object_name,
+            mode="null_terminated_lines",
+        ):
+            stuff, name = line.split("\t", 1)
+            name_to_stuff[name] = stuff
+        return name_to_stuff
+    base_tree = read_tree(base_tree_object_name)
+    old_tree = read_tree(old_tree_object_name)
+    new_tree = read_tree(new_tree_object_name)
+    conflicts = []
+    updated_names = []
+
+    for name, new_stuff in new_tree.items():
+        old_stuff = old_tree.get(name, None)
+        if old_stuff == new_stuff: continue
+        # There is a change to be applied here.
+
+        if old_stuff == None:
+            # Create file.
+            if name in base_tree:
+                conflicts.append(name)
+            else:
+                base_tree[name] = new_stuff
+                updated_names.append(name)
+            continue
+        # 3-way merge.
+        try:
+            base_stuff = base_tree[name]
+        except KeyError:
+            conflicts.append(name)
+            continue
+        # Check the types of the objects.
+        base_mode_and_type = base_stuff.rsplit(" ", 1)[0]
+        old_mode_and_type = old_stuff.rsplit(" ", 1)[0]
+        new_mode_and_type = new_stuff.rsplit(" ", 1)[0]
+        # We should only be dealing with the 3 different types of blobs at this point.
+        if old_mode_and_type == base_mode_and_type:
+            # Any patch to the mode will apply cleanly.
+            use_mode_and_type = new_mode_and_type
+        elif new_mode_and_type == base_mode_and_type:
+            # The patch to the mode is already applied.
+            use_mode_and_type = new_mode_and_type
+        else:
+            # Something changed with the mode that we can't handle.
+            # Perhaps the upstream replaced a file with a symlink.
+            conflicts.append(name)
+            continue
+        with tempfile.NamedTemporaryFile() as base_f, tempfile.NamedTemporaryFile() as old_f, tempfile.NamedTemporaryFile() as new_f:
+            # Put the file contentses in temp files.
+            git("cat-file",
+                "blob",
+                base_stuff.rsplit(" ", 1)[1],
+                output_path=base_f.name,
+                mode="mutating")
+            git("cat-file",
+                "blob",
+                old_stuff.rsplit(" ", 1)[1],
+                output_path=old_f.name,
+                mode="mutating")
+            git("cat-file",
+                "blob",
+                new_stuff.rsplit(" ", 1)[1],
+                output_path=new_f.name,
+                mode="mutating")
+            # Merge the files.
+            try:
+                git("merge-file",
+                    base_f.name, old_f.name, new_f.name,
+                    mode="inherit_stdout")
+            except subprocess.CalledProcessError as e:
+                # From `git help merge-file`:
+                # > The exit value of this program is negative on error,
+                # > and the number of conflicts otherwise (truncated to 127 if there are more than that many conflicts).
+                # > If the merge was clean, the exit value is 0.
+                if e.returncode < 0:
+                    raise
+                # There were conflicts.
+                conflicts.append(name)
+                continue
+            # The base file has now been modified with the patched content.
+            use_stuff = "{} {}".format(
+                use_mode_and_type,
+                git("hash-object",
+                    "-w", base_f.name,
+                    mode="single_line"),
+            )
+            base_tree[name] = use_stuff
+            updated_names.append(name)
+
+    # Patches could remove items, although this is typically done by ignoring things.
+    for name in old_tree.keys() - new_tree.keys():
+        old_stuff = old_tree[name]
+        base_stuff = base_tree.get(name, None)
+        if base_stuff != old_stuff:
+            conflicts.append(name)
+            continue
+        del base_stuff[name]
+        updated_names.append(name)
+
+    if len(conflicts) > 0:
+        sys.exit("ERROR: applying tree patch would produce conflicts in these files:\n" + "\n".join(
+            "  " + shlex.quote(name)
+            for name in conflicts
+        ))
+
+    # Create a tree with the new content.
+    depth_to_parent_to_updated_children = collections.defaultdict(lambda: collections.defaultdict(set), {
+        # 2: {"a/b": {"c.txt"}},
+    })
+    for name in updated_names:
+        if "/" in name:
+            parent, child = name.rsplit("/", 1)
+            depth_to_parent_to_updated_children[len(parent.split("/"))][parent].add(child)
+        else:
+            depth_to_parent_to_updated_children[0][""].add(name)
+
+    for depth in reversed(range(max(depth_to_parent_to_updated_children.keys()) + 1)):
+        for parent, updated_children in depth_to_parent_to_updated_children[depth].items():
+            new_ls_tree_lines = []
+            for ls_tree_line in git("ls-tree",
+                "--full-tree",
+                "-z",
+                base_tree_object_name if depth == 0 else "{}:{}".format(base_tree_object_name, parent),
+                mode="null_terminated_lines",
+            ):
+                stuff, name = ls_tree_line.split("\t", 1)
+                if name not in updated_children:
+                    new_ls_tree_lines.append(ls_tree_line)
+                    continue
+                # This item was changed somehow.
+                updated_children.remove(name)
+                if depth > 0:
+                    full_name = "{}/{}".format(parent, name)
+                else:
+                    full_name = name
+                try:
+                    updated_stuff = base_tree[full_name]
+                except KeyError:
+                    # Item was deleted
+                    continue
+                # Item was edited.
+                new_ls_tree_lines.append("{}\t{}".format(updated_stuff, name))
+            for name in updated_children:
+                # Item was added
+                if depth > 0:
+                    full_name = "{}/{}".format(parent, name)
+                else:
+                    full_name = name
+                updated_stuff = base_tree[full_name]
+                new_ls_tree_lines.append("{}\t{}".format(updated_stuff, name))
+            updated_tree_object_name = git("mktree",
+                "-z",
+                input="".join(
+                    line + "\x00"
+                    for line in new_ls_tree_lines
+                ),
+                mode="single_line")
+
+            if depth == 0:
+                root_tree = updated_tree_object_name
+            else:
+                base_tree[parent] = "040000 tree {}".format(updated_tree_object_name)
+                # Be sure to catch this update as we ascend from the depths.
+                if "/" in parent:
+                    grandparent, parent_name = parent.rsplit("/", 1)
+                    depth_to_parent_to_updated_children[len(grandparent.split("/"))][grandparent].add(parent_name)
+                else:
+                    depth_to_parent_to_updated_children[0][""].add(parent)
+
+    return root_tree
+
 
 def get_git_commit_tree_object_name(commit_object_name):
     return git("rev-parse",
@@ -782,6 +1018,27 @@ def get_git_commit_tree_object_name(commit_object_name):
         commit_object_name + "^{tree}",
         mode="single_line",
     )
+
+def git_object_exists(expression):
+    try:
+        git("rev-parse",
+            "--verify",
+            expression,
+            suppress_stderr=True,
+            mode="single_line")
+    except subprocess.CalledProcessError:
+        return False
+    return True
+
+def git_fetch_to_cache(url, ref):
+    # This name can be anything.
+    external_ref_local_name = "refs/vendor/fetch_head"
+    git("fetch",
+        "--no-tags", "--force",
+        "--depth", "1",
+        url,
+        "{}:{}".format(ref, external_ref_local_name),
+        mode="inherit_stdout")
 
 def parse_submodule_path_to_url_from_gitmodules_config_content(content_bytes):
     path_configs = {
@@ -835,7 +1092,7 @@ def get_repo_root():
         "--show-toplevel",
         mode="single_line")
 
-def git(*args, mode, cwd=".", input=None, output_path=None, suppress_stderr=False):
+def git(*args, mode, cwd=".", input=None, output_path=None, suppress_stderr=False, skip_in_dry_run=False):
     if type(input) == str:
         input = input.encode("utf8")
 
@@ -860,7 +1117,7 @@ def git(*args, mode, cwd=".", input=None, output_path=None, suppress_stderr=Fals
         if output_path != None:
             shell_script += " > " + output_path
         if input == None or input == b"":
-            if CliOptions.dry_run and mode == "mutating":
+            if CliOptions.dry_run and skip_in_dry_run:
                 shell_script = "# " + shell_script
         else:
             # some rough heuristic to split the input into "lines" or whatever.
@@ -888,18 +1145,19 @@ def git(*args, mode, cwd=".", input=None, output_path=None, suppress_stderr=Fals
                 "\n  echo -ne " + quote_for_echo(line)
                 for line in lines
             ) + "\n}"
-            if CliOptions.dry_run and mode == "mutating":
+            if CliOptions.dry_run and skip_in_dry_run:
                 shell_script = ": #" + shell_script
             shell_script = input_script + " | " + shell_script
         sys.stderr.write(shell_script + "\n"); sys.stderr.flush()
 
     if mode == "mutating":
-        if not CliOptions.dry_run:
-            if output_path != None:
-                with open(output_path, "wb") as f:
-                    subprocess.run(cmd, cwd=cwd, input=input, stdout=f, stderr=stderr, check=True)
-            else:
-                subprocess.run(cmd, cwd=cwd, input=input, stderr=stderr, check=True)
+        if CliOptions.dry_run and skip_in_dry_run:
+            return None
+        if output_path != None:
+            with open(output_path, "wb") as f:
+                subprocess.run(cmd, cwd=cwd, input=input, stdout=f, stderr=stderr, check=True)
+        else:
+            subprocess.run(cmd, cwd=cwd, input=input, stderr=stderr, check=True)
         return None
 
     # read-only or otherwise no-observable-change command.
