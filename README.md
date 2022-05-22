@@ -1,36 +1,43 @@
 # git-vendor
 
-Manage external git content in your git repo.
-This is like git submodules, but all the content is integrated into your content as though you copy-pasted it all into a directory.
-This means that collaborators running `git pull` will always get the content regardless of any follow-up `git submodule update --init --recrusive` or whatever.
+Manage external git content in your git repo. This is like git submodules, but all the content is integrated into your content as though you copied it into your project and committed it normally. This means that collaborators running `git pull` will always get the content; no need to run any git submodule commands. Beyond initially copying the content, this tool can update the content when new changes are made by the upstream repository.
 
-The main advantage of using `git-vendor` over other solutions (as of writing this), is that you can customize the vendored content via filtering and patching, and these transformations are maintained while updating the vendored content (TODO: implement these features; see Status below.).
+The main advantage of using `git-vendor` over other solutions (as of writing this), is that you can customize the vendored content via filtering and patching, and these transformations are maintained while updating the vendored content to new versions provided by the third party. This is conceptionally similar to maintaining a fork of a submodule, but it's all part of your main repo; no submodules.
 
 Example use cases:
 
-* You depend on an open source library (or a specific version of it) that isn't available in your system package manager. You opt to simply copy paste the entire source code that you need into your project.
-* You find a bug in an open source library you depend on. You try submitting a patch to the maintainers, but they don't accept it for whatever reason. You decide to copy paste the entire source code for that project into your repository so you can apply the patch you need.
-* Your organization maintains code in several repositories. An API schema in a server's repo is also needed to build a client in a different repo. Currently the client repo adds the entire server's codebase as a git submodule to just have access to the API schema, but that dependency is slowing down and complicating your CI/CD pipelines as well as straining the Principle of Least Privilege. You're considering just copy pasting the API schemas alone into your client repos, but that would make it tricky to keep the content up to date with the latest changes.
+* You depend on an open source library (or a specific version of it) that isn't available in your system package manager. You opt to simply copy the entire source code at a tagged version into your project. You delete all the examples, unit tests, and CI/CD configuration from that project, since it doesn't matter for your project.
+* You're trying to build the above library with CMake, and it requires several modifications to integrate into your build system. Then you find a bug in the above library's code, and you patch that too. The upstream maintainers may or may not merge any of these changes into their code base. Whenever you update the library to a newer tagged version, you want to make sure the patches you've applied persist.
+* Your organization maintains code in multiple repositories. An API schema in a server's repo is also needed to build a client in a different repo. Currently the client repo adds the entire server's codebase as a git submodule to just have access to the API schema, but that dependency is slowing down and complicating your CI/CD pipelines as well as straining the Principle of Least Privilege. You decide to copy the API schema alone into your client repo, and you need a way to keep the copy up to date with the server repo's release branch.
+
+TODO: usage examples that demonstrate how this tool solves those problems.
 
 ## Status
 
 - [x] Basic initialization and download for a one-time import.
 - [x] Following a branch or other named ref, and checking for and incorporating changes since the last download.
+    - [x] Pinning vendored content to a specific commit instead of following a named ref.
     - [ ] Switch from the generically configured `--ref` to specifically `--branch` or `--tag`, the difference being that `--tag` is assumed to never need to be re-fetched, skipping the `git ls-remote` call to the server.
-- [x] Pinning vendored content to a specific commit instead of following a named ref.
-- [x] File name based include/exclude filtering of external content using python's `fnmatch` mechanism.
-    - [ ] Switch from python's `fnmatch` mechanism to a more familiar syntax like `.gitignore` or github's `CODEOWNERS` mechanism.
+    - [ ] Support for remotes that don't have the `allow-tip-sha1-in-want` capability, such as `https://git.ffmpeg.org/ffmpeg.git`. (This means falling back to full history fetching instead of `--depth=1`. And in the case of pinning to a specific `ref-sha1`, we'll need an additional configuration mechanism to say that the named ref is just an ancestor of the desired pin and not meant to be followed. (Maybe pinning to a specific commit should have been a separate configuration item all along anyway.))
+    - [ ] Don't say "sha1" in the interface to this tool, since git kinda maybe technically someday supports sha256.
 - [x] Configuration information stored in a file `.git-vendor-config` in your repo. Automatically gets edited as appropriate while maintaining formatting and comments.
-- [x] Convenient command to support removing vendored content.
-- [x] Convenient command to support renaming/moving local vendored content.
-- [ ] Convenient command to support editing the config file. Validation for a manually edited config file.
+    - [x] Convenient command to support removing vendored content.
+    - [x] Convenient command to support renaming/moving local vendored content.
+    - [ ] Convenient command to support editing the config file. Validation for a manually edited config file.
+- [x] File name based include/exclude filtering of external content using python's `fnmatch` mechanism.
+    - [ ] Switch from python's `fnmatch` mechanism to a more familiar syntax like `.gitignore` or GitHub's `CODEOWNERS`.
 - [x] Vendoring a subdirectory instead of the entire project's directory structure. E.g. with `--dir=vendor/foo --subdir=src`, the external file `src/bar.txt` in your project becomes as `vendor/foo/bar.txt` with no `src` component.
-- [x] Support for also vendoring the submodules of a vendored project while following the proper commit pointers.
-- [ ] Noticing local changes applied to the external content, and facilitating pushing the changes somewhere.
-- [ ] Maintaining local changes that are not intended to be pushed (other than the include/exclude filters above), and facilitating pushing without these local edits. This could be patches to file contents or file renames perhaps.
+- [x] Support maintaining local patches to the external content (in addition to subdir and include/exclude filters) that survive incoming updates to the third-party content.
+    - [ ] Support viewing the patches in an interface like `git diff`.
+    - [ ] Support exporting the patches to an external repository of the third-party content to facilitate submitting the changes upstream.
+- [x] Support for also vendoring the submodules of a vendored project while following the proper commit pointers. (They can be omitted with a filename based exclude rule.)
 - [ ] Proper documentation for command line interface and config file.
+    - [ ] Cleanup argparse CLI so that more options are accepted as positional arguments. E.g. `git-vendor mv --dir a/b/c --new-dir a/z/c` should instead be expressible as `git-vendor mv a/{b,z}/c` (in Bash).
 - [ ] Unit tests for corner case error handling. (Code coverage?)
+    - [ ] Probably should suppress stack traces on all `CalledProcessError`.
 - [ ] Support for non-utf8 file names. (This means proper juggling of bytes vs strings in Python 3; currently the code assumes everything is valid utf8 and converts it all to `str` for convenience. Alas, Python 2's str would have actually worked better; see [utf8everywhere.org](https://utf8everywhere.org/).)
+- [ ] Audit local named ref usage and how it relates to objects being orphaned and gc'ed too soon, or perhaps never being gc'ed when they should.
+- [ ] Declare 1.0 stable, and move the remaining unfinished items in this list to GitHub Issues.
 
 ## git-vendor vs other options
 
@@ -39,6 +46,8 @@ Example use cases:
 That project is a great start, but it's limited in functionality and written in a language hostile to complexity. In addition, it uses git commit messages as a source of truth for configuration, which does not play well with GutHub projects that require squash-merging all pull requests. I haven't checked to see if there are any performance issues to be worried about when using `git log --grep` to read configuration information, but it smells like the wrong tool for the job.
 
 The main issue with that project is simply its missing features. I at least want file name based include/exclude filtering, which optimally[1] involves pretty heavy algorithmic use of `git mktree`, and I have no interest in solving that problem in `sh`. Although the code in that project appears to be very high quality and well maintained software, I expect that a reimplementation in a more popular programming language (in this case Python) will improve collaboration.
+
+I named my project the same as that one with the intent to obviate it for every use case. The main drawback of my project is that it depends on Python 3. (And also my project is unfinished as of writing this.)
 
 [1] It's possible to use simple `git add -A` on local file system content instead of fancy `mktree` algorithms, but that involves multiple additional moving parts and opportunities for things to go wrong and be surprising. For example, your global ignore rules might prevent some of the content from getting added, or the file system's case insensitivity or unicode normalization might cause surprises. In terms of what actually happens between these two approaches, `git add` seems simple at first, but `mktree` is more correct.
 
