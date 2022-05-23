@@ -15,11 +15,11 @@ TODO: usage examples that demonstrate how this tool solves those problems.
 ## Status
 
 - [x] Basic initialization and download for a one-time import.
-- [x] Following a branch or other named ref, and checking for and incorporating changes since the last download.
-    - [x] Pinning vendored content to a specific commit instead of following a named ref.
-    - [ ] Switch from the generically configured `--ref` to specifically `--branch` or `--tag`, the difference being that `--tag` is assumed to never need to be re-fetched, skipping the `git ls-remote` call to the server.
-    - [ ] Support for remotes that don't have the `allow-tip-sha1-in-want` capability, such as `https://git.ffmpeg.org/ffmpeg.git`. (This means falling back to full history fetching instead of `--depth=1`. And in the case of pinning to a specific `ref-sha1`, we'll need an additional configuration mechanism to say that the named ref is just an ancestor of the desired pin and not meant to be followed. (Maybe pinning to a specific commit should have been a separate configuration item all along anyway.))
-    - [ ] Don't say "sha1" in the interface to this tool, since git kinda maybe technically someday supports sha256.
+- [x] Following a branch with `--follow-branch`, and checking for and incorporating changes since the last download.
+    - [x] Pinning content to a specific tag with `--pin-to-tag`. In this mode, the third-party server is assumed to never update the ref, and is not queried in the typical case.
+    - [x] Pinning content to a specific commit with `--pin-to-commit`.
+    - [x] Hypothetical untested support for repos using sha256 instead of sha1.
+    - [ ] Support for remotes that don't have the `allow-tip-sha1-in-want` capability, such as `https://git.ffmpeg.org/ffmpeg.git`. I can't figure out how to tell if a git remote has this capability before trying and failing a `git fetch`. Somehow `git submodule update` knows how to do it. Maybe it's time to read the source.
 - [x] Configuration information stored in a file `.git-vendor-config` in your repo. Automatically gets edited as appropriate while maintaining formatting and comments.
     - [x] Convenient command to support removing vendored content.
     - [x] Convenient command to support renaming/moving local vendored content.
