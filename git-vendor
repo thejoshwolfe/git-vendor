@@ -775,19 +775,34 @@ def filter_tree(tree_object_name, start_at_subdir, include_patterns, exclude_pat
         # 3: {"a/b/c": ["100644 blob 615a35da50b4aa9c4525e26aba1cd830010e4e46\t.gitignore"]},
     })
 
-    def recurse(tree_object_name, submodule_path):
+    def make_get_submodule_path_to_url_fn(tree_object_name):
+        # Don't try to parse .gitmodules eagerly, because it usually doesn't exist.
+        submodule_path_to_url = None
+        def get_submodule_path_to_url():
+            nonlocal submodule_path_to_url
+            if submodule_path_to_url == None:
+                # Need to parse .gitmodules file.
+                submodule_path_to_url = parse_submodule_path_to_url_from_gitmodules_config_content(
+                    git("cat-file",
+                        "blob",
+                        "{}:.gitmodules".format(tree_object_name),
+                        mode="raw_bytes"),
+                )
+            return submodule_path_to_url
+        return get_submodule_path_to_url
+    def recurse(tree_object_name, path_so_far, submodule_root_tree_depth, get_submodule_path_to_url_fn):
         submodule_path_to_url = None # filled in lazily.
         for ls_tree_line in git("ls-tree",
-            "--full-tree", "-r",
+            "--full-tree",
             "-z",
             tree_object_name,
             mode="null_terminated_lines",
         ):
             stuff, name = ls_tree_line.split("\t", 1)
             mode_and_type, object_name = stuff.rsplit(" ", 1)
-            if submodule_path != None:
+            if path_so_far != None:
                 # This is *not* an os path, so don't use os.path.join. It must use forward slashes.
-                full_path = submodule_path + "/" + name
+                full_path = path_so_far + "/" + name
             else:
                 full_path = name
             if len(include_patterns) > 0 and not any(fnmatch.fnmatch(full_path, pattern) for pattern in include_patterns):
@@ -805,21 +820,18 @@ def filter_tree(tree_object_name, start_at_subdir, include_patterns, exclude_pat
                         mode="single_line")
                 except subprocess.CalledProcessError:
                     # Need to fetch.
-                    if submodule_path_to_url == None:
-                        # Need to parse .gitmodules file.
-                        submodule_path_to_url = parse_submodule_path_to_url_from_gitmodules_config_content(
-                            git("cat-file",
-                                "blob",
-                                "{}:.gitmodules".format(tree_object_name),
-                                mode="raw_bytes"),
-                        )
-                    git_fetch_to_cache(submodule_path_to_url[name], object_name)
+                    path_in_submodule = full_path.split("/", submodule_root_tree_depth)[-1]
+                    git_fetch_to_cache(get_submodule_path_to_url_fn()[path_in_submodule], object_name)
                     # Try again to resolve the commit to a tree.
                     object_name = git("rev-parse",
                         "--verify",
                         object_name + "^{tree}",
                         mode="single_line")
-                recurse(object_name, name)
+                recurse(object_name, name, len(full_path.split("/")), make_get_submodule_path_to_url_fn(object_name))
+                continue
+            if mode_and_type == "040000 tree":
+                # Recurse into tree.
+                recurse(object_name, full_path, submodule_root_tree_depth, get_submodule_path_to_url_fn)
                 continue
             # Keep this blob.
             assert mode_and_type in (
@@ -832,7 +844,7 @@ def filter_tree(tree_object_name, start_at_subdir, include_patterns, exclude_pat
                 depth_to_parent_to_ls_tree_lines[len(parent.split("/"))][parent].append("{}\t{}".format(stuff, child))
             else:
                 depth_to_parent_to_ls_tree_lines[0][""].append(ls_tree_line)
-    recurse(tree_object_name, None)
+    recurse(tree_object_name, None, 0, make_get_submodule_path_to_url_fn(tree_object_name))
 
     # Build new trees from leaves up.
     root_tree = None
