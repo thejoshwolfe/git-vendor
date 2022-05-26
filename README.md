@@ -27,7 +27,7 @@ TODO: usage examples that demonstrate how this tool solves those problems.
 - [x] File name based include/exclude filtering of external content. The syntax is very similar to the gitignore syntax.
 - [x] Vendoring a subdirectory instead of the entire project's directory structure. E.g. with `--dir=vendor/foo --subdir=src`, the external file `src/bar.txt` in your project becomes as `vendor/foo/bar.txt` with no `src` component.
 - [x] Support maintaining local patches to the external content (in addition to subdir and include/exclude filters) that survive incoming updates to the third-party content.
-    - [ ] Support viewing the patches in an interface like `git diff`.
+    - [x] Support viewing the patches in an interface like `git diff`.
     - [ ] Support exporting the patches to an external repository of the third-party content to facilitate submitting the changes upstream.
 - [x] Support for also vendoring the submodules of a vendored project while following the proper commit pointers. (They can be omitted with a filename based exclude rule.)
 - [ ] Proper documentation for command line interface and config file.

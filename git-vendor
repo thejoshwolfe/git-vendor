@@ -23,6 +23,7 @@ def main():
         "rm", "remove",
         "mv", "rename",
         "save-edits", "save-patch",
+        "diff-edits", "diff-patch",
     ])
     parser.add_argument("--dir")
     parser.add_argument("--new-dir")
@@ -66,6 +67,9 @@ def main():
     elif args.command in ("save-edits", "save-patch"):
         assert args.dir
         do_save_patch(args.dir)
+    elif args.command in ("diff-edits", "diff-patch"):
+        assert args.dir
+        do_diff_patch(args.dir)
     else: assert False
 
 def do_add(url, follow_branch, pin_to_tag, pin_to_commit, dir, subdir, include, exclude, allow_dir_exists):
@@ -222,6 +226,19 @@ def do_save_patch(actual_dir):
     print("")
     if not CliOptions.dry_run:
         print("Use \"git commit\" to proceed with the commit.")
+
+def do_diff_patch(actual_dir):
+    config_item, _ = find_config_item_by_dir(actual_dir)
+    if config_item.tree_patch == None:
+        return
+    old_commit, old_tree_object_name, new_tree_object_name = config_item.tree_patch.split(":")
+    if not git_object_exists(old_tree_object_name):
+        git_fetch_to_cache(config_item.url, old_commit)
+    cmd = ["git", "diff", old_tree_object_name, new_tree_object_name]
+    if CliOptions.dry_run:
+        print(" ".join(shlex.quote(x) for x in cmd))
+    else:
+        os.execvp(cmd[0], cmd)
 
 
 def find_config_item_by_dir(actual_dir):
