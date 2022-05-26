@@ -316,7 +316,20 @@ def download_the_thing(config_item, section_index):
             # We need to merge the patches with the new changes.
             # Make sure we have the old tree fetched and cached. It may have been gc'ed.
             if not git_object_exists(old_tree_object_name + "^{tree}"):
-                git_fetch_to_cache(config_item.url, old_commit)
+                # The old tree is based on the commit.
+                if not git_object_exists(old_commit + "^{tree}"):
+                    # Start by fetching the commit.
+                    git_fetch_to_cache(config_item.url, old_commit)
+                # We need to run our filters on the old commit to recreate the old tree.
+                recreated_old_tree_object_name = filter_tree(
+                    get_git_commit_tree_object_name(old_commit), config_item.subdir,
+                    config_item.include, config_item.exclude)
+                if recreated_old_tree_object_name != old_tree_object_name:
+                    sys.exit("\n".join("ERROR: " + line for line in [
+                        "Something changed in the config file, and `git gc` has deleted an object critical for patching.",
+                        "Please revert your changes to `.git-vendor-config`, and run `git-vendor status` to recover the deleted object.",
+                        "Then redo your edits, and try again."
+                    ]))
 
             pre_patch_tree_object_name = vendored_tree_object_name
             vendored_tree_object_name = apply_tree_patch(vendored_tree_object_name, old_tree_object_name, new_tree_object_name)
