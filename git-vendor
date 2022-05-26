@@ -1165,7 +1165,7 @@ def compile_filter(pattern, error_hint, *, return_maybe_on_prefix_match=False):
             else:
                 # Check for a prefix match.
                 pattern_segment_run = pattern_segment_runs[0]
-                prefix_size = min(len(segments[:-1]), len(pattern_segment_run))
+                prefix_size = min(len(segments), len(pattern_segment_run))
                 for segment, pattern_segment in zip(segments[:prefix_size], pattern_segment_run[:prefix_size]):
                     if not fnmatch.fnmatch(segment, pattern_segment):
                         # Not even a prefix match.
