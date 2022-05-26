@@ -32,8 +32,8 @@ def main():
     follow_group.add_argument("--follow-branch")
     follow_group.add_argument("--pin-to-tag")
     follow_group.add_argument("--pin-to-commit")
-    parser.add_argument("--include-fnmatch", action="append")
-    parser.add_argument("--exclude-fnmatch", action="append")
+    parser.add_argument("--include", action="append")
+    parser.add_argument("--exclude", action="append")
     parser.add_argument("--allow-dir-exists", action="store_true")
 
     args = parser.parse_args()
@@ -52,7 +52,7 @@ def main():
     if args.command == "add":
         assert args.url and args.dir
         assert args.follow_branch or args.pin_to_tag or args.pin_to_commit
-        do_add(args.url, args.follow_branch, args.pin_to_tag, args.pin_to_commit, args.dir, args.subdir, args.include_fnmatch, args.exclude_fnmatch, args.allow_dir_exists)
+        do_add(args.url, args.follow_branch, args.pin_to_tag, args.pin_to_commit, args.dir, args.subdir, args.include, args.exclude, args.allow_dir_exists)
     elif args.command == "update":
         do_update(args.dir)
     elif args.command in ("ls", "list"):
@@ -68,7 +68,7 @@ def main():
         do_save_patch(args.dir)
     else: assert False
 
-def do_add(url, follow_branch, pin_to_tag, pin_to_commit, dir, subdir, include_fnmatch, exclude_fnmatch, allow_dir_exists):
+def do_add(url, follow_branch, pin_to_tag, pin_to_commit, dir, subdir, include, exclude, allow_dir_exists):
     new_config_item = ConfigItem()
 
     new_config_item.dir = validate_dir(dir, "--dir", allow_dir_exists)
@@ -88,10 +88,10 @@ def do_add(url, follow_branch, pin_to_tag, pin_to_commit, dir, subdir, include_f
         new_config_item.pin_to_commit = pin_to_commit
     else: assert False
 
-    if include_fnmatch:
-        new_config_item.include_fnmatch = include_fnmatch
-    if exclude_fnmatch:
-        new_config_item.exclude_fnmatch = exclude_fnmatch
+    if include:
+        new_config_item.include = include
+    if exclude:
+        new_config_item.exclude = exclude
 
     # Before trying to add anything, validate the existing config file, if any.
     read_config_file()
@@ -201,7 +201,7 @@ def do_save_patch(actual_dir):
     fetch_and_set_commit(config_item, refresh_ref=False)
     old_tree_object_name = filter_tree(
         get_git_commit_tree_object_name(config_item.commit), config_item.subdir,
-        config_item.include_fnmatch, config_item.exclude_fnmatch)
+        config_item.include, config_item.exclude)
 
     new_tree_patch = "{}:{}:{}".format(config_item.commit, old_tree_object_name, new_tree_object_name)
     if config_item.tree_patch == new_tree_patch:
@@ -289,7 +289,7 @@ def download_the_thing(config_item, section_index):
     # Filter vendored tree and inline submodules.
     vendored_tree_object_name = filter_tree(
         get_git_commit_tree_object_name(config_item.commit), config_item.subdir,
-        config_item.include_fnmatch, config_item.exclude_fnmatch)
+        config_item.include, config_item.exclude)
     # Apply patches.
     if config_item.tree_patch != None:
         old_commit, old_tree_object_name, new_tree_object_name = config_item.tree_patch.split(":")
@@ -375,15 +375,15 @@ class ConfigItem:
         self.pin_to_commit = None
         self.commit = None
         self.subdir = None
-        self.include_fnmatch = []
-        self.exclude_fnmatch = []
+        self.include = []
+        self.exclude = []
         self.tree_patch = None
 config_name_to_field_name = {
     k.replace("_", "-"): k
     for k in ConfigItem().__dict__.keys()
 }
 required_config_property_names = ["dir", "url"]
-config_name_order = ["dir", "url", "follow-branch", "pin-to-tag", "pin-to-commit", "commit", "subdir", "include-fnmatch", "exclude-fnmatch", "tree-patch"]
+config_name_order = ["dir", "url", "follow-branch", "pin-to-tag", "pin-to-commit", "commit", "subdir", "include", "exclude", "tree-patch"]
 assert set(config_name_order) == set(config_name_to_field_name.keys())
 assert set(required_config_property_names) <= set(config_name_order)
 
@@ -475,7 +475,7 @@ def edit_config_file(new_config_item, section_index):
     current_section_index = 0
     property_new_line_indexes = collections.defaultdict(list, {
         # "dir": 3,
-        # "include_fnmatch": [4, 5],
+        # "include": [4, 5],
     })
     new_lines = []
     def flush_section():
@@ -758,7 +758,14 @@ def insert_tree_at_path(base_tree_object_name, new_tree_object_name, new_tree_su
             mode="single_line")
     return recurse(base_tree_object_name, new_tree_subdir_path)
 
-def filter_tree(tree_object_name, start_at_subdir, include_patterns, exclude_patterns):
+def filter_tree(tree_object_name, start_at_subdir, include, exclude):
+    include_so_far = MAYBE
+    if len(include) == 0:
+        include_so_far = True
+        include_filter_fns = None
+    else:
+        include_filter_fns = [compile_filter(pattern, "--include=" + pattern, return_maybe_on_prefix_match=True) for pattern in include]
+    exclude_filter_fns = [compile_filter(pattern, "--exclude=" + pattern) for pattern in exclude]
     if start_at_subdir != None:
         ls_tree_lines = git("ls-tree",
             "-z", "-d",
@@ -775,24 +782,66 @@ def filter_tree(tree_object_name, start_at_subdir, include_patterns, exclude_pat
         # 3: {"a/b/c": ["100644 blob 615a35da50b4aa9c4525e26aba1cd830010e4e46\t.gitignore"]},
     })
 
-    def recurse(tree_object_name, submodule_path):
+    def make_get_submodule_path_to_url_fn(tree_object_name):
+        # Don't try to parse .gitmodules eagerly, because it usually doesn't exist.
+        submodule_path_to_url = None
+        def get_submodule_path_to_url():
+            nonlocal submodule_path_to_url
+            if submodule_path_to_url == None:
+                # Need to parse .gitmodules file.
+                submodule_path_to_url = parse_submodule_path_to_url_from_gitmodules_config_content(
+                    git("cat-file",
+                        "blob",
+                        "{}:.gitmodules".format(tree_object_name),
+                        mode="raw_bytes"),
+                )
+            return submodule_path_to_url
+        return get_submodule_path_to_url
+    def recurse(tree_object_name, path_so_far, submodule_root_tree_depth, include_so_far, get_submodule_path_to_url_fn):
         submodule_path_to_url = None # filled in lazily.
         for ls_tree_line in git("ls-tree",
-            "--full-tree", "-r",
+            "--full-tree",
             "-z",
             tree_object_name,
             mode="null_terminated_lines",
         ):
             stuff, name = ls_tree_line.split("\t", 1)
             mode_and_type, object_name = stuff.rsplit(" ", 1)
-            if submodule_path != None:
+            if path_so_far != None:
                 # This is *not* an os path, so don't use os.path.join. It must use forward slashes.
-                full_path = submodule_path + "/" + name
+                full_path = path_so_far + "/" + name
             else:
                 full_path = name
-            if len(include_patterns) > 0 and not any(fnmatch.fnmatch(full_path, pattern) for pattern in include_patterns):
+            is_tree = mode_and_type in ("040000 tree", "160000 commit")
+            segments = full_path.split("/")
+            if include_so_far == MAYBE:
+                # Check include filters
+                include_this_item = False
+                for fn in include_filter_fns:
+                    result = fn(is_tree, segments)
+                    if result == True:
+                        include_this_item = True
+                        # This is as sure as it gets.
+                        break
+                    if result == False:
+                        # Check other include rules.
+                        continue
+                    # Prefix match.
+                    assert result == MAYBE and is_tree == True
+                    include_this_item = MAYBE
+                    # There might be an even better match. Keep checking.
+                if include_this_item == False:
+                    # Not explicitly included.
+                    continue
+            else:
+                assert include_so_far == True
+                include_this_item = True
+            if any(fn(is_tree, segments) for fn in exclude_filter_fns):
+                # Explicitly excluded.
                 continue
-            if any(fnmatch.fnmatch(full_path, pattern) for pattern in exclude_patterns):
+            if mode_and_type == "040000 tree":
+                # Recurse into tree.
+                recurse(object_name, full_path, submodule_root_tree_depth, include_this_item, get_submodule_path_to_url_fn)
                 continue
             if mode_and_type == "160000 commit":
                 # Inline submoudle.
@@ -805,21 +854,14 @@ def filter_tree(tree_object_name, start_at_subdir, include_patterns, exclude_pat
                         mode="single_line")
                 except subprocess.CalledProcessError:
                     # Need to fetch.
-                    if submodule_path_to_url == None:
-                        # Need to parse .gitmodules file.
-                        submodule_path_to_url = parse_submodule_path_to_url_from_gitmodules_config_content(
-                            git("cat-file",
-                                "blob",
-                                "{}:.gitmodules".format(tree_object_name),
-                                mode="raw_bytes"),
-                        )
-                    git_fetch_to_cache(submodule_path_to_url[name], object_name)
+                    path_in_submodule = full_path.split("/", submodule_root_tree_depth)[-1]
+                    git_fetch_to_cache(get_submodule_path_to_url_fn()[path_in_submodule], object_name)
                     # Try again to resolve the commit to a tree.
                     object_name = git("rev-parse",
                         "--verify",
                         object_name + "^{tree}",
                         mode="single_line")
-                recurse(object_name, name)
+                recurse(object_name, full_path, len(full_path.split("/")), include_this_item, make_get_submodule_path_to_url_fn(object_name))
                 continue
             # Keep this blob.
             assert mode_and_type in (
@@ -832,7 +874,10 @@ def filter_tree(tree_object_name, start_at_subdir, include_patterns, exclude_pat
                 depth_to_parent_to_ls_tree_lines[len(parent.split("/"))][parent].append("{}\t{}".format(stuff, child))
             else:
                 depth_to_parent_to_ls_tree_lines[0][""].append(ls_tree_line)
-    recurse(tree_object_name, None)
+    recurse(tree_object_name, None, 0, include_so_far, make_get_submodule_path_to_url_fn(tree_object_name))
+
+    if len(depth_to_parent_to_ls_tree_lines) == 0:
+        sys.exit("ERROR: no content after filters!")
 
     # Build new trees from leaves up.
     root_tree = None
@@ -1046,6 +1091,98 @@ def apply_tree_patch(base_tree_object_name, old_tree_object_name, new_tree_objec
 
     return root_tree
 
+MAYBE = "maybe"
+def compile_filter(pattern, error_hint, *, return_maybe_on_prefix_match=False):
+    # See `git help gitignore`.
+    if "//" in pattern or pattern == "/":
+        sys.exit("ERROR: invalid pattern: " + error_hint)
+    # Consume leading and trailing slashes.
+    tree_only = False
+    absolute = False
+    if pattern.startswith("/"):
+        absolute = True
+        pattern = pattern[1:]
+    if pattern.endswith("/"):
+        tree_only = True
+        pattern = pattern[:-1]
+    # Any inner slash turns the pattern absolute.
+    if "/" in pattern:
+        absolute = True
+    # Split the pattern.
+    pattern_segments = pattern.split("/")
+    if pattern_segments[-1] == "**":
+        sys.exit("ERROR: ending a pattern with ** is the same as omitting it. please omit it: " + error_hint)
+    # Find "**" segments.
+    # "a/b/**/c/**/d" => [["a", "b"], ["c"], []] # ("d" is the tip.)
+    pattern_segment_runs = [[]]
+    tip_pattern = pattern_segments[-1]
+    for pattern_segment in pattern_segments[:-1]:
+        if pattern in (".", ".."):
+            sys.exit("ERROR: pattern cannot contain {} segments: {}".format(repr(pattern), error_hint))
+        if pattern_segment == "**":
+            pattern_segment_runs.append([])
+        else:
+            pattern_segment_runs[-1].append(pattern_segment)
+    total_non_tip_pattern_segments = sum(len(pattern_segment_run) for pattern_segment_run in pattern_segment_runs)
+    def filter_fn(is_tree, segments):
+        if tree_only and not is_tree:
+            return False
+        negative = False
+        if return_maybe_on_prefix_match and is_tree:
+            if not absolute:
+                # All relative includes could potentially be matches.
+                negative = MAYBE
+            else:
+                # Check for a prefix match.
+                pattern_segment_run = pattern_segment_runs[0]
+                prefix_size = min(len(segments[:-1]), len(pattern_segment_run))
+                for segment, pattern_segment in zip(segments[:prefix_size], pattern_segment_run[:prefix_size]):
+                    if not fnmatch.fnmatch(segment, pattern_segment):
+                        # Not even a prefix match.
+                        return False
+                # Prefix matches. The worst we can do from here is a maybe.
+                negative = MAYBE
+                # (We'll end up checking aginst the prefix again below.
+                #  A possible optimization is to signal skipping the first run below somehow.)
+        # Check the tip first. It's the one that changes the fastest.
+        if not fnmatch.fnmatch(segments[-1], tip_pattern):
+            return negative
+        if not absolute:
+            return True
+        # Match everything around the ** segments.
+        pattern_segment_alignment = 0
+        available_forward_shifts = len(segments[:-1]) - total_non_tip_pattern_segments
+        if len(pattern_segment_runs) == 1:
+            # There's only one run, which must consume all the segments.
+            if total_non_tip_pattern_segments != len(segments[:-1]):
+                # Wrong number of segments. There's no way this can be a match.
+                return negative
+        segments_consumed = 0
+        for run_index, pattern_segment_run in enumerate(pattern_segment_runs):
+            if run_index == len(pattern_segment_runs) - 1:
+                # The last run has to be aligned to the end.
+                pattern_segment_alignment = available_forward_shifts
+            while pattern_segment_alignment <= available_forward_shifts:
+                index = pattern_segment_alignment + segments_consumed
+                for segment, pattern_segment in zip(segments[index:index + len(pattern_segment_run)], pattern_segment_run):
+                    if not fnmatch.fnmatch(segment, pattern_segment):
+                        # This run is not aligned correctly.
+                        break
+                else:
+                    segments_consumed += len(pattern_segment_run)
+                    break
+                # This run is not aligned correctly.
+                if run_index == 0:
+                    # The first run has to start at the beginning. If it didn't work, it's all wrong.
+                    return negative
+                # Try shifting forward.
+                pattern_segment_alignment += 1
+            else:
+                # Out of space to match.
+                return negative
+        # All runs matched.
+        return True
+    return filter_fn
 
 def get_git_commit_tree_object_name(commit_object_name):
     return git("rev-parse",

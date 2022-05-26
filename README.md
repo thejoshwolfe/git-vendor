@@ -24,8 +24,7 @@ TODO: usage examples that demonstrate how this tool solves those problems.
     - [x] Convenient command to support removing vendored content.
     - [x] Convenient command to support renaming/moving local vendored content.
     - [ ] Convenient command to support editing the config file. Validation for a manually edited config file.
-- [x] File name based include/exclude filtering of external content using python's `fnmatch` mechanism.
-    - [ ] Switch from python's `fnmatch` mechanism to a more familiar syntax like `.gitignore` or GitHub's `CODEOWNERS`.
+- [x] File name based include/exclude filtering of external content. The syntax is very similar to the gitignore syntax.
 - [x] Vendoring a subdirectory instead of the entire project's directory structure. E.g. with `--dir=vendor/foo --subdir=src`, the external file `src/bar.txt` in your project becomes as `vendor/foo/bar.txt` with no `src` component.
 - [x] Support maintaining local patches to the external content (in addition to subdir and include/exclude filters) that survive incoming updates to the third-party content.
     - [ ] Support viewing the patches in an interface like `git diff`.
