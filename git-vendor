@@ -471,6 +471,9 @@ def read_config_file():
         except KeyError:
             line_error(line_index, "unrecognized property name: " + repr(name))
 
+        if any(c in value for c in "'\"\\"):
+            line_error(line_index, "quoting and backslash escaping in values is not yet supported")
+
         if current_config_item.__dict__[field_name] == None:
             current_config_item.__dict__[field_name] = value
         elif type(current_config_item.__dict__[field_name]) == list:
