@@ -801,7 +801,7 @@ def filter_tree(tree_object_name, start_at_subdir, include, exclude):
     exclude_filter_fns = [compile_filter(pattern, "--exclude=" + pattern) for pattern in exclude]
     if start_at_subdir != None:
         ls_tree_lines = git("ls-tree",
-            "-z", "-d",
+            "-z", "-d", "--full-tree",
             tree_object_name,
             "--",
             start_at_subdir,
