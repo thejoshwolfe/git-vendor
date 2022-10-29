@@ -10,7 +10,7 @@ tests_root = os.path.abspath("./.tests")
 def main():
     # Basic test
     down, up = init("basic", "downstream", "upstream")
-    vendor("add",
+    git_vendor("add",
         "--dir", "vendor/up",
         "--url", up,
         "--follow-branch", "main",
@@ -18,7 +18,19 @@ def main():
     git("commit",
         "-m", "vendor upstream",
         cwd=down)
-    assert git("rev-parse", "--verify", "HEAD", cwd=down).strip() == "eafe75b232fc96def7e0befab742ff2ecfb7d7af"
+    assert git("rev-parse", "--verify", "HEAD:vendor", cwd=down).strip() == "893d8d2100f3442ef6f2a5871f792f9cb22b13b3"
+
+    clone = git_clone(down, "clone")
+
+    set_file(up, "new_file.txt")
+    git_vendor("update", cwd=down)
+    git("commit",
+        "-m", "vendor upstream",
+        cwd=down)
+
+    git("pull", "-q", cwd=clone)
+    assert git("rev-parse", "--verify", "HEAD:vendor", cwd=clone).strip() == "049762cf4bca46d59fefcf222c61d1a301054d5c"
+
 
 def init(test_name, downstream_repo_dir_name, *upstream_repo_names):
     test_dir = os.path.join(tests_root, test_name)
@@ -51,6 +63,13 @@ def set_file(repo_dir, file_name):
     git("add", file_name, cwd=repo_dir)
     git("commit", "-m", "set file: " + file_name, cwd=repo_dir)
 
+def git_clone(origin_dir, repo_name):
+    test_dir = os.path.dirname(origin_dir)
+    repo_dir = os.path.join(test_dir, repo_name)
+    git("clone", "-q", origin_dir, repo_dir, cwd=test_dir)
+
+    return repo_dir
+
 def git(*args, cwd):
     cmd = ["git"]
     cmd.extend(args)
@@ -60,7 +79,7 @@ def git(*args, cwd):
     )
     return process.stdout
 
-def vendor(*args, cwd):
+def git_vendor(*args, cwd):
     cmd = [os.path.abspath("./git-vendor")]
     cmd.extend(args)
     subprocess.run(cmd,
