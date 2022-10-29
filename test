@@ -1,0 +1,99 @@
+#!/usr/bin/env python3
+
+import os, sys, subprocess
+import shutil
+from functools import lru_cache
+
+assert os.path.samefile("./test", __file__), "you need to run this from the repo root as ./test"
+tests_root = os.path.abspath("./.tests")
+
+def main():
+    # Basic test
+    down, up = init("basic", "downstream", "upstream")
+    vendor("add",
+        "--dir", "vendor/up",
+        "--url", up,
+        "--follow-branch", "main",
+        cwd=down)
+    git("commit",
+        "-m", "vendor upstream",
+        cwd=down)
+    assert git("rev-parse", "--verify", "HEAD", cwd=down).strip() == "eafe75b232fc96def7e0befab742ff2ecfb7d7af"
+
+def init(test_name, downstream_repo_dir_name, *upstream_repo_names):
+    test_dir = os.path.join(tests_root, test_name)
+    try:
+        shutil.rmtree(test_dir)
+    except FileNotFoundError:
+        pass
+    os.makedirs(test_dir)
+
+    repo_dirs = []
+    for dir_name in (downstream_repo_dir_name,) + upstream_repo_names:
+        repo_dir = os.path.join(test_dir, dir_name)
+        os.makedirs(repo_dir)
+        git("init",
+            "--initial-branch", "main",
+            cwd=repo_dir)
+        git("commit",
+            "--allow-empty",
+            "-m", "init repo: " + dir_name,
+            cwd=repo_dir)
+        set_file(repo_dir, dir_name + ".txt")
+
+        repo_dirs.append(repo_dir)
+
+    return repo_dirs
+
+def set_file(repo_dir, file_name):
+    with open(os.path.join(repo_dir, file_name), "w") as f:
+        f.write("the contents of {}\n".format(file_name))
+    git("add", file_name, cwd=repo_dir)
+    git("commit", "-m", "set file: " + file_name, cwd=repo_dir)
+
+def git(*args, cwd):
+    cmd = ["git"]
+    cmd.extend(args)
+    process = subprocess.run(cmd,
+        cwd=cwd, env=get_git_env(),
+        check=True, stdout=subprocess.PIPE, encoding="utf8",
+    )
+    return process.stdout
+
+def vendor(*args, cwd):
+    cmd = [os.path.abspath("./git-vendor")]
+    cmd.extend(args)
+    subprocess.run(cmd,
+        cwd=cwd, env=get_git_env(),
+        check=True, capture_output=True, encoding="utf8",
+    )
+
+@lru_cache()
+def get_git_env():
+    """
+    We want commit hashes to be deterministic across time and different users running the test suite.
+    This environment disables all user configuration and system configuration for git's behavior,
+    and freezes time at a constant date.
+    """
+    # Start with a copy of our own environment, then scrub out any git-specific configuration.
+    git_env = os.environ.copy()
+    for name in list(git_env.keys()):
+        if name.startswith("GIT_"):
+            del git_env[name]
+
+    # Disable reading /etc/gitconfig.
+    git_env["GIT_CONFIG_NOSYSTEM"] = "1"
+    # Ensure ~/.gitconfig is never used.
+    git_env["HOME"] = "/dev/null"
+
+    # Don't expose system information when making commits.
+    git_env["GIT_AUTHOR_NAME"] = git_env["GIT_COMMITTER_NAME"] = "Nobody"
+    git_env["GIT_AUTHOR_EMAIL"] = git_env["GIT_COMMITTER_EMAIL"] = "nobody@none.invalid"
+    # Don't expose current time when making commits.
+    earliest_allowed_time = "100000000 +0000" # "Sat Mar 3 09:46:40 1973 +0000"
+    git_env["GIT_AUTHOR_DATE"] = git_env["GIT_COMMITTER_DATE"] = earliest_allowed_time
+
+    return git_env
+
+if __name__ == "__main__":
+    main()
