@@ -41,6 +41,21 @@ TODO: usage examples that demonstrate how this tool solves those problems.
 
 ## git-vendor vs other options
 
+| | `git submodule` | `git subtree` | [ingydotnet/git-subrepo](https://github.com/ingydotnet/git-subrepo) | [brettlangdon/git-vendor](https://github.com/brettlangdon/git-vendor) | thejoshwolfe/git-vendor | manual copy |
+| --- | --- | --- | --- | --- | --- | --- |
+| just works for collaborators | ❌[1] | ✔️ | ✔️ | ✔️ | ✔️ | ✔️ |
+| version-controlled config file | ✔️ | ❌ | ✔️ | ❌[2] | ✔️ | ❌ |
+| push as maintainer | ✔️ | ✔️ | ✔️ | ✔️ | ❌ | ❌ |
+| fully a git repo | ✔️ | ❌ | ❌ | ❌ | ❌ | ❌ |
+| file name based filtering | ❌ | ❌ | ❌ | ❌ | ✔️ | ✔️ |
+| non-trivial patches | ❌[3] | ❌[3] | ❌[3] | ❌[3] | ❌[3] | ✔️ |
+| implementation | built-in | built-in | bash | sh | python | manual |
+| stars on github | celebrity | celebrity | lots | modest | few | |
+
+* [1] git submodules do not get initialized on clone and do not get updated on pull.
+* [2] brettlangdon/git-vendor stores configuration information in git commit messages.
+* [3] to maintain non-trivial patches, you'd need to maintain your own fork, then vendor the fork.
+
 #### [brettlangdon/git-vendor](https://github.com/brettlangdon/git-vendor)
 
 That project is a great start, but it's limited in functionality and written in a language hostile to complexity. In addition, it uses git commit messages as a source of truth for configuration, which does not play well with GutHub projects that require squash-merging all pull requests. I haven't checked to see if there are any performance issues to be worried about when using `git log --grep` to read configuration information, but it smells like the wrong tool for the job.
