@@ -51,7 +51,7 @@ I named my project the same as that one with the intent to obviate it for every 
 
 [1] It's possible to use simple `git add -A` on local file system content instead of fancy `mktree` algorithms, but that involves multiple additional moving parts and opportunities for things to go wrong and be surprising. For example, your global ignore rules might prevent some of the content from getting added, or the file system's case insensitivity or unicode normalization might cause surprises. In terms of what actually happens between these two approaches, `git add` seems simple at first, but `mktree` is more correct.
 
-#### Just submodules
+#### `git submoudle`
 
 For some reason, the command line user experience of git submodules is seemingly designed to be atrocious. Just to start off the complaining train, `git status` does not warn you about uninitialized submodules someone else has added to your project. (And the default behavior of `git clone` does not initialize submodules.) This simple problem accounts for about 60% of the wasted time debugging why "something's wrong" with a repository in my experience.
 
@@ -60,6 +60,12 @@ The next car in the complaining train is that `git submodule update` does not up
 I could go on complaining about how replacing a submodule with a regular directory breaks everyone's `git pull`, or how the hidden content in the `.git/modules` directory will cause subtle errors if you ever try to replace a submodule with another one at the same path, but that's starting to get into niche territory (all of which I have actually run into in a professional environment). The crux of the problem is that git submodules are also functioning git repositories, which introduces tons of complexity unsuitable for a vendoring usecase.
 
 If you were to try to solve the filtering and patching use case with a submodule, it would probably come in the form of a commit that applies the changes you want. This probably means forking the dependency under your own user/organization/server and pushing one or more commits. When new changes are made to the third-party content, you would probably try doing a merge between their changes and your patch. However, if your real intention is to *ignore* the content of the `examples/` directory, for example, then a commit that deletes all the content there is the wrong tool for the job. That commit would cause a merge conflict when anything in the content is changed, and would completely miss new additions to the directory. This is an example of how file name based filtering better expresses intent, and is more suitable to the vendoring use case.
+
+#### `git subtree`
+
+Git subtree solves the collaboration problems by embedding the vendored content in your own repo, but it seems like a low-level command designed to have automation built on top of it. For example, every time you want to pull the latest changes, you have to specify the url again.
+
+Additionally, `git subtree` does not support file name based filtering, which is important for my usecase.
 
 #### [ingydotnet/git-subrepo](https://github.com/ingydotnet/git-subrepo)
 
