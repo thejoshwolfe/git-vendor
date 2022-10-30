@@ -41,14 +41,14 @@ TODO: usage examples that demonstrate how this tool solves those problems.
 
 ## git-vendor vs other options
 
-| | `git submodule` | `git subtree` | [ingydotnet/git-subrepo](https://github.com/ingydotnet/git-subrepo) | [brettlangdon/git-vendor](https://github.com/brettlangdon/git-vendor) | thejoshwolfe/git-vendor | manual copy |
+| | `git submodule` | `git subtree` | [ingydotnet/git-subrepo](https://github.com/ingydotnet/git-subrepo) | [brettlangdon/git-vendor](https://github.com/brettlangdon/git-vendor) | thejoshwolfe/git-vendor (this) | manual copy |
 | --- | --- | --- | --- | --- | --- | --- |
 | just works for collaborators | ❌[1] | ✔️ | ✔️ | ✔️ | ✔️ | ✔️ |
 | version-controlled config file | ✔️ | ❌ | ✔️ | ❌[2] | ✔️ | ❌ |
-| push as maintainer | ✔️ | ✔️ | ✔️ | ✔️ | ❌ | ❌ |
+| push as maintainer | ✔️ | ✔️ | ✔️ | ✔️ | ❌ TODO | ❌ |
 | fully a git repo | ✔️ | ❌ | ❌ | ❌ | ❌ | ❌ |
 | file name based filtering | ❌ | ❌ | ❌ | ❌ | ✔️ | ✔️ |
-| non-trivial patches | ❌[3] | ❌[3] | ❌[3] | ❌[3] | ❌[3] | ✔️ |
+| non-trivial patches | ❌[3] | ❌[3] | ❌[3] | ❌[3] | ❌[3] TODO | ✔️ |
 | implementation | built-in | built-in | bash | sh | python | manual |
 | stars on github | celebrity | celebrity | lots | modest | few | |
 
