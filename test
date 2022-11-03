@@ -7,14 +7,26 @@ from functools import lru_cache
 assert os.path.samefile("./test", __file__), "you need to run this from the repo root as ./test"
 tests_root = os.path.abspath("./.tests")
 
-def main():
-    follow_branch()
-    pin_to_tag()
-    pin_to_commit()
-    edit_config_through_cli()
+all_tests = []
+def test(f):
+    def wrapped():
+        print("{}...".format(f.__name__), end="", flush=True)
+        try:
+            f(f.__name__)
+        except:
+            print("fail")
+            raise
+        print("pass")
+    all_tests.append(wrapped)
+    return wrapped
 
-def follow_branch():
-    down, up = init("follow_branch", "downstream", "upstream")
+def main():
+    for f in all_tests:
+        f()
+
+@test
+def follow_branch(test_name):
+    down, up = init(test_name, "downstream", "upstream")
     git_vendor("add",
         "--dir", "vendor/up",
         "--url", up,
@@ -36,8 +48,9 @@ def follow_branch():
     git("pull", "-q", cwd=clone)
     assert git_rev_parse_verify("HEAD:vendor/up", cwd=down) == git_rev_parse_verify("HEAD^{tree}", cwd=up)
 
-def pin_to_tag():
-    down, up = init("pin_to_tag", "downstream", "upstream")
+@test
+def pin_to_tag(test_name):
+    down, up = init(test_name, "downstream", "upstream")
     git("tag", "v1.0.0", cwd=up)
 
     git_vendor("add",
@@ -55,8 +68,9 @@ def pin_to_tag():
     # Updating should trigger no errors, because it should not fetch.
     git_vendor("update", cwd=down)
 
-def pin_to_commit():
-    down, up = init("pin_to_commit", "downstream", "upstream")
+@test
+def pin_to_commit(test_name):
+    down, up = init(test_name, "downstream", "upstream")
     commit_sha1 = git_rev_parse_verify("HEAD", cwd=up)
     upstream_tree = git_rev_parse_verify("HEAD^{tree}", cwd=up)
 
@@ -80,8 +94,9 @@ def pin_to_commit():
     # Updating should trigger no errors, because it should not fetch.
     git_vendor("update", cwd=down)
 
-def edit_config_through_cli():
-    down, up = init("edit_config_through_cli", "downstream", "upstream")
+@test
+def edit_config_through_cli(test_name):
+    down, up = init(test_name, "downstream", "upstream")
     non_vendoring_entire_tree = git_rev_parse_verify("HEAD^{tree}", cwd=down)
 
     git_vendor("add",
