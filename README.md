@@ -23,7 +23,8 @@ TODO: usage examples that demonstrate how this tool solves those problems.
 - [x] Configuration information stored in a file `.git-vendor-config` in your repo. Automatically gets edited as appropriate while maintaining formatting and comments.
     - [x] Convenient command to support removing vendored content.
     - [x] Convenient command to support renaming/moving local vendored content.
-    - [ ] Convenient command to support editing the config file. Validation for a manually edited config file.
+    - [x] Convenient command to support editing the config file.
+    - [ ] Validation for a manually edited config file.
     - [ ] Support some kind of quoting/escaping syntax for unusual characters in the config file.
 - [x] File name based include/exclude filtering of external content. The syntax is very similar to the gitignore syntax.
 - [x] Vendoring a subdirectory instead of the entire project's directory structure. E.g. with `--dir=vendor/foo --subdir=src`, the external file `src/bar.txt` in your project becomes as `vendor/foo/bar.txt` with no `src` component.

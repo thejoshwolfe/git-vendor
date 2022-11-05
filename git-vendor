@@ -18,6 +18,7 @@ def main():
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("command", choices=[
         "add",
+        "set",
         "update", "status",
         "ls", "list",
         "rm", "remove",
@@ -54,6 +55,9 @@ def main():
         assert args.url and args.dir
         assert args.follow_branch or args.pin_to_tag or args.pin_to_commit
         do_add(args.url, args.follow_branch, args.pin_to_tag, args.pin_to_commit, args.dir, args.subdir, args.include, args.exclude, args.allow_dir_exists)
+    elif args.command == "set":
+        assert args.dir
+        do_set(args.url, args.follow_branch, args.pin_to_tag, args.pin_to_commit, args.dir, args.subdir, args.include, args.exclude)
     elif args.command == "update":
         do_update(args.dir)
     elif args.command in ("ls", "list"):
@@ -100,6 +104,47 @@ def do_add(url, follow_branch, pin_to_tag, pin_to_commit, dir, subdir, include, 
     # Before trying to add anything, validate the existing config file, if any.
     read_config_file()
     download_the_thing(new_config_item, NEW_SECTION)
+
+def do_set(url, follow_branch, pin_to_tag, pin_to_commit, dir, subdir, include, exclude):
+    config_item, section_index = find_config_item_by_dir(dir)
+
+    if url != None:
+        validate_url(url)
+        config_item.url = url
+    if subdir != None:
+        if subdir != "":
+            config_item.subdir = validate_subdir(subdir)
+        else:
+            config_item.subdir = None
+
+    if follow_branch != None:
+        validate_ref("--follow-branch", follow_branch)
+        config_item.follow_branch = follow_branch
+        config_item.pin_to_tag = None
+        config_item.pin_to_commit = None
+    elif pin_to_tag != None:
+        validate_ref("--pin-to-tag", pin_to_tag)
+        config_item.follow_branch = None
+        config_item.pin_to_tag = pin_to_tag
+        config_item.pin_to_commit = None
+    elif pin_to_commit != None:
+        validate_object_name(pin_to_commit)
+        config_item.follow_branch = None
+        config_item.pin_to_tag = None
+        config_item.pin_to_commit = pin_to_commit
+
+    if include != None:
+        if include == [""]:
+            config_item.include = []
+        else:
+            config_item.include = include
+    if exclude != None:
+        if exclude == [""]:
+            config_item.exclude = []
+        else:
+            config_item.exclude = exclude
+
+    download_the_thing(config_item, section_index)
 
 def do_update(maybe_dir):
     if maybe_dir != None:
@@ -340,6 +385,9 @@ def download_the_thing(config_item, section_index):
                 # Update the tree patch for the new commit.
                 config_item.tree_patch = "{}:{}:{}".format(config_item.commit, pre_patch_tree_object_name, vendored_tree_object_name)
 
+    # The config item metadata is finalized. Put it in the index.
+    edit_config_file(config_item, section_index)
+
     current_complete_tree_object_name = git("write-tree", mode="single_line")
     new_complete_tree_object_name = insert_tree_at_path(current_complete_tree_object_name, vendored_tree_object_name, config_item.dir)
     if current_complete_tree_object_name == new_complete_tree_object_name:
@@ -349,8 +397,6 @@ def download_the_thing(config_item, section_index):
         return
 
     if CliOptions.dry_run:
-        # Show changes to the config file.
-        edit_config_file(config_item, section_index)
         # Show a diff of the incoming changes.
         print("")
         print("changes to to be applied to: " + config_item.dir)
@@ -384,9 +430,6 @@ def download_the_thing(config_item, section_index):
                 mode="newline_terminated_lines")
             if len(lines) == 0:
                 break
-
-        # Also save any changes to the config file, such as commit= changes.
-        edit_config_file(config_item, section_index)
 
         # Tell the user to proceed with a git commit.
         print("Changes staged to be committed:")
@@ -554,7 +597,7 @@ def edit_config_file(new_config_item, section_index):
                 # List property shouldn't exist.
                 if field_name in property_new_line_indexes:
                     for line_index in property_new_line_indexes[field_name]:
-                        delete_indexes.extend((line_index, None))
+                        line_edits.append((line_index, DELETE))
                 continue
             if type(value) == list:
                 # List property should have values.

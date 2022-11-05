@@ -129,6 +129,9 @@ def edit_config_through_cli(test_name):
     assert git_rev_parse_verify("HEAD^{tree}", cwd=down) == non_vendoring_entire_tree
 
 
+# TODO: test if the "-xffd" really needs the "x".
+
+
 def init(test_name, downstream_repo_dir_name, *upstream_repo_names):
     test_dir = os.path.join(tests_root, test_name)
     try:
