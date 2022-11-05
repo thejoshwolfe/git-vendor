@@ -585,9 +585,6 @@ def edit_config_file(new_config_item, section_index):
         for name in config_name_order:
             field_name = config_name_to_field_name[name]
             value = new_config_item.__dict__[field_name]
-            # Hide commit= when pin-to-commit= is specified.
-            if field_name == "commit" and new_config_item.pin_to_commit != None:
-                value = None
             if value == None:
                 # Scalar property shouldn't exist.
                 if field_name in property_new_line_indexes:
