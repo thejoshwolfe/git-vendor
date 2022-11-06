@@ -128,8 +128,43 @@ def edit_config_through_cli(test_name):
         cwd=down)
     assert git_rev_parse_verify("HEAD^{tree}", cwd=down) == non_vendoring_entire_tree
 
+# TODO add new tests here
 
-# TODO: test if the "-xffd" really needs the "x".
+@test
+def clean_preserves_ignored(test_name):
+    down, up = init(test_name, "downstream", "upstream")
+    first_commit = git_rev_parse_verify("HEAD", cwd=up)
+
+    prefix = ""
+    for i in range(5):
+        set_file(up, prefix + ".gitignore", contents="/a/.gitignore\n")
+        prefix += "a/"
+
+    later_commit = git_rev_parse_verify("HEAD", cwd=up)
+
+    set_file(down, ".gitignore", contents="*.ignored\n")
+
+    git_vendor("add",
+        "--dir", "vendor/up",
+        "--url", up,
+        "--pin-to-commit", later_commit,
+        cwd=down)
+    assert os.path.isdir(os.path.join(down, "vendor/up", "a"))
+    git("commit",
+        "-m", "vendor upstream",
+        cwd=down)
+
+    set_file(down, "vendor/up/trash.ignored")
+
+    git_vendor("set",
+        "--dir", "vendor/up",
+        "--pin-to-commit", first_commit,
+        cwd=down)
+    git("commit",
+        "-m", "remove most vendored content",
+        cwd=down)
+    assert not os.path.isdir(os.path.join(down, "vendor/up/a"))
+    assert os.path.isfile(os.path.join(down, "vendor/up/trash.ignored"))
 
 
 def init(test_name, downstream_repo_dir_name, *upstream_repo_names):
@@ -157,11 +192,16 @@ def init(test_name, downstream_repo_dir_name, *upstream_repo_names):
 
     return repo_dirs
 
-def set_file(repo_dir, file_name):
+def set_file(repo_dir, file_name, *, contents=None, commit=True):
+    if contents == None:
+        contents = "the contents of {}\n".format(file_name)
+    full_path = os.path.join(repo_dir, file_name)
+    os.makedirs(os.path.dirname(full_path), exist_ok=True)
     with open(os.path.join(repo_dir, file_name), "w") as f:
-        f.write("the contents of {}\n".format(file_name))
-    git("add", file_name, cwd=repo_dir)
-    git("commit", "-m", "set file: " + file_name, cwd=repo_dir)
+        f.write(contents)
+    if commit:
+        git("add", "-f", file_name, cwd=repo_dir)
+        git("commit", "-m", "set file: " + file_name, cwd=repo_dir)
 
 def git_clone(origin_dir, repo_name):
     test_dir = os.path.dirname(origin_dir)

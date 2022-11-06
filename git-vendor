@@ -422,10 +422,10 @@ def download_the_thing(config_item, section_index):
         # This clean only works because of the `git read-tree` updating the index above.
         while True:
             # We have to repeatedly clean in case the first clean deletes a .gitignore file that reveals more untracked content.
-            # Reproduce this scenario by running the following bash command repeatedly:
-            #   echo /a/.gitignore > .gitignore && mkdir a && cd a && cp ../.gitignore .
+            # Reproduce this scenario by running the following bash command in a freshly initialized git repo:
+            #   (for i in {0..5}; do echo /a/.gitignore > .gitignore && mkdir a && cd a; done; cp ../.gitignore .)
             lines = git("clean",
-                "-xffd",
+                "-ffd",
                 actual_dir,
                 mode="newline_terminated_lines")
             if len(lines) == 0:
