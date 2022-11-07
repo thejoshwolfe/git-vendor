@@ -475,7 +475,7 @@ def read_config_file():
     current_config_item = ConfigItem()
     current_config_item_has_any_properties = False
     def line_error(line_index, msg):
-        sys.exit("{}:{}: error: {}\n{}\n{}".format(
+        raise ValidationError("{}:{}: error: {}\n{}\n{}".format(
             os.path.relpath(config_file_path), line_index + 1, msg,
             lines[line_index].rstrip(),
             "^" * len(lines[line_index].rstrip()),
@@ -1170,7 +1170,7 @@ MAYBE = "maybe"
 def compile_filter(pattern, error_hint, *, return_maybe_on_prefix_match=False):
     # See `git help gitignore`.
     if "//" in pattern or pattern == "/":
-        sys.exit("ERROR: invalid pattern: " + error_hint)
+        raise ValidationError("Invalid pattern: " + error_hint)
     # Consume leading and trailing slashes.
     tree_only = False
     absolute = False
@@ -1186,14 +1186,14 @@ def compile_filter(pattern, error_hint, *, return_maybe_on_prefix_match=False):
     # Split the pattern.
     pattern_segments = pattern.split("/")
     if pattern_segments[-1] == "**":
-        sys.exit("ERROR: ending a pattern with ** is the same as omitting it. please omit it: " + error_hint)
+        raise ValidationError("Ending a pattern with ** is the same as omitting it. please omit it: " + error_hint)
     # Find "**" segments.
     # "a/b/**/c/**/d" => [["a", "b"], ["c"], []] # ("d" is the tip.)
     pattern_segment_runs = [[]]
     tip_pattern = pattern_segments[-1]
     for pattern_segment in pattern_segments[:-1]:
         if pattern in (".", ".."):
-            sys.exit("ERROR: pattern cannot contain {} segments: {}".format(repr(pattern), error_hint))
+            raise ValidationError("Pattern cannot contain {} segments: {}".format(repr(pattern), error_hint))
         if pattern_segment == "**":
             pattern_segment_runs.append([])
         else:
@@ -1470,7 +1470,7 @@ def validate_field(field_name, value, error_fn):
         elif field_name == "tree_patch":
             validate_tree_patch(value)
         else: assert False, "unhandled field name: " + field_name
-    except AssertionError as e:
+    except ValidationError as e:
         error_fn(str(e))
 
 def validate_dir(dir, param_name, allow_dir_exists):
@@ -1484,7 +1484,7 @@ def validate_dir(dir, param_name, allow_dir_exists):
 
 def validate_subdir(subdir):
     if os.path.isabs(subdir) or os.path.commonpath([subdir, ".."]) == "..":
-        sys.exit("ERROR: Invalid --subdir={}".format(shlex.quote(subdir)))
+        raise ValidationError("Invalid --subdir={}".format(shlex.quote(subdir)))
     if os.path.normpath(subdir) == ".":
         return None
     return os.path.normpath(subdir).replace(os.path.sep, "/")
@@ -1509,23 +1509,23 @@ def validate_url(url):
         # To actually use a relative path url with this program, please just convert it to absolute first.
         pass
 
-    sys.exit("ERROR: Invalid --url={}".format(url))
+    raise ValidationError("Invalid --url={}".format(url))
 
 def validate_ref(param_name, ref):
     # This is really the only thing to check for, because it's interpreted specially during `git fetch` and such.
     if "*" in ref:
-        sys.exit("ERROR: Invalid {}={}".format(param_name, ref))
+        raise ValidationError("Invalid {}={}".format(param_name, ref))
 # 40 for sha1, 64 for experimental sha256.
 git_object_name_re = re.compile(r'^[0-9a-f]{40}(?:[0-9a-f]{24})?$')
 def validate_object_name(param_name, object_name):
     if git_object_name_re.match(object_name):
         return
-    sys.exit("ERROR: Invalid {}={}".format(param_name, object_name))
+    raise ValidationError("Invalid {}={}".format(param_name, object_name))
 
 def validate_tree_patch(tree_patch):
     segments = tree_patch.split(":")
     if len(segments) != 3:
-        sys.exit("ERROR: Invalid tree-patch format: " + tree_patch)
+        raise ValidationError("Invalid tree-patch format: " + tree_patch)
     for i, segment in enumerate(segments):
         validate_object_name("(tree-patch[{}])".format(i), segment)
 
@@ -1533,5 +1533,11 @@ def warning(*lines):
     for line in lines:
         print("WARNING: " + line, file=sys.stderr, flush=True)
 
+class ValidationError(Exception):
+    pass
+
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except ValidationError as e:
+        sys.exit("ERROR: " + str(e))
