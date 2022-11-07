@@ -92,7 +92,7 @@ def do_add(url, follow_branch, pin_to_tag, pin_to_commit, dir, subdir, include, 
         validate_ref("--pin-to-tag", pin_to_tag)
         new_config_item.pin_to_tag = pin_to_tag
     elif pin_to_commit != None:
-        validate_object_name(pin_to_commit)
+        validate_object_name("--pin-to-commit", pin_to_commit)
         new_config_item.pin_to_commit = pin_to_commit
     else: assert False
 
@@ -128,7 +128,7 @@ def do_set(url, follow_branch, pin_to_tag, pin_to_commit, dir, subdir, include, 
         config_item.pin_to_tag = pin_to_tag
         config_item.pin_to_commit = None
     elif pin_to_commit != None:
-        validate_object_name(pin_to_commit)
+        validate_object_name("--pin-to-commit", pin_to_commit)
         config_item.follow_branch = None
         config_item.pin_to_tag = None
         config_item.pin_to_commit = pin_to_commit
@@ -516,6 +516,8 @@ def read_config_file():
 
         if any(c in value for c in "'\"\\"):
             line_error(line_index, "quoting and backslash escaping in values is not yet supported")
+
+        validate_field(field_name, value, lambda msg: line_error(line_index, msg))
 
         if current_config_item.__dict__[field_name] == None:
             current_config_item.__dict__[field_name] = value
@@ -1445,6 +1447,32 @@ def is_path_within(super_dir, sub_dir):
     sub_dir = os.path.abspath(sub_dir)
     return os.path.commonpath([super_dir, sub_dir]).startswith(super_dir)
 
+def validate_field(field_name, value, error_fn):
+    try:
+        if field_name == "dir":
+            validate_dir(value, "--dir", True)
+        elif field_name == "url":
+            validate_url(value)
+        elif field_name == "subdir":
+            validate_subdir(value)
+        elif field_name == "follow_branch":
+            validate_ref("--follow-branch", value)
+        elif field_name == "pin_to_tag":
+            validate_ref("--pin-to-tag", value)
+        elif field_name == "pin_to_commit":
+            validate_object_name("--pin-to-commit", value)
+        elif field_name == "include":
+            pass
+        elif field_name == "exclude":
+            pass
+        elif field_name == "commit":
+            validate_object_name("(commit)", value)
+        elif field_name == "tree_patch":
+            validate_tree_patch(value)
+        else: assert False, "unhandled field name: " + field_name
+    except AssertionError as e:
+        error_fn(str(e))
+
 def validate_dir(dir, param_name, allow_dir_exists):
     repo_root = get_repo_root()
     assert is_path_within(repo_root, dir), param_name + " is outside the git repo"
@@ -1489,10 +1517,17 @@ def validate_ref(param_name, ref):
         sys.exit("ERROR: Invalid {}={}".format(param_name, ref))
 # 40 for sha1, 64 for experimental sha256.
 git_object_name_re = re.compile(r'^[0-9a-f]{40}(?:[0-9a-f]{24})?$')
-def validate_object_name(object_name):
+def validate_object_name(param_name, object_name):
     if git_object_name_re.match(object_name):
         return
-    sys.exit("ERROR: Invalid --pin-to-commit={}".format(object_name))
+    sys.exit("ERROR: Invalid {}={}".format(param_name, object_name))
+
+def validate_tree_patch(tree_patch):
+    segments = tree_patch.split(":")
+    if len(segments) != 3:
+        sys.exit("ERROR: Invalid tree-patch format: " + tree_patch)
+    for i, segment in enumerate(segments):
+        validate_object_name("(tree-patch[{}])".format(i), segment)
 
 def warning(*lines):
     for line in lines:

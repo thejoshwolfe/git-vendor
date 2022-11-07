@@ -63,7 +63,7 @@ def pin_to_tag(test_name):
         cwd=down)
 
     # Break fetching from this repo.
-    os.rename(up, up + ".hidden")
+    os.rename(os.path.join(up, ".git"), os.path.join(up, ".git.broken"))
 
     # Updating should trigger no errors, because it should not fetch.
     git_vendor("update", cwd=down)
@@ -89,7 +89,7 @@ def pin_to_commit(test_name):
     assert git_rev_parse_verify("HEAD:vendor/up", cwd=down) == upstream_tree
 
     # Break fetching from this repo.
-    os.rename(up, up + ".hidden")
+    os.rename(os.path.join(up, ".git"), os.path.join(up, ".git.broken"))
 
     # Updating should trigger no errors, because it should not fetch.
     git_vendor("update", cwd=down)
