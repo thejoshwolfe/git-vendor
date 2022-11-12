@@ -514,8 +514,16 @@ def read_config_file():
         except KeyError:
             line_error(line_index, "unrecognized property name: " + repr(name))
 
-        if any(c in value for c in "'\"\\"):
-            line_error(line_index, "quoting and backslash escaping in values is not yet supported")
+        try:
+            value_split = shlex.split(value)
+        except ValueError as e:
+            line_error(line_index, "Invalid quoting in value: " + str(e))
+        if len(value_split) == 0:
+            value = ""
+        elif len(value_split) == 1:
+            [value] = value_split
+        else:
+            line_error(line_index, "value with spaces must be quoted: " + shlex.quote(value))
 
         validate_field(field_name, value, lambda msg: line_error(line_index, msg))
 
@@ -549,6 +557,9 @@ def edit_config_file(new_config_item, section_index):
             "",
         ]
 
+    def format_line(name, value):
+        return "{}={}".format(name, shlex.quote(value))
+
     theres_at_least_one_section = False
     current_section_index = 0
     property_new_line_indexes = collections.defaultdict(list, {
@@ -576,12 +587,12 @@ def edit_config_file(new_config_item, section_index):
             old_value_start_index = old_line.index("=") + 1
             while old_line[old_value_start_index:old_value_start_index+1].isspace():
                 old_value_start_index += 1
-            old_value = old_line[old_value_start_index:].rstrip()
+            [old_value] = shlex.split(old_line[old_value_start_index:].rstrip())
             if old_value == new_value:
                 # Already correct.
                 return
             # Edit
-            new_line = old_line[:old_value_start_index] + new_value
+            new_line = old_line[:old_value_start_index] + shlex.quote(new_value)
             line_edits.append((line_index, EDIT, new_line))
         last_seen_property_line = None # Should always be initialized by the required fields.
         for name in config_name_order:
@@ -606,7 +617,7 @@ def edit_config_file(new_config_item, section_index):
                         line_edits.append((property_new_line_indexes[field_name][i], DELETE))
                     elif i >= len(property_new_line_indexes[field_name]):
                         # Add new values.
-                        line_edits.append((last_seen_property_line + 1, INSERT, "{}={}".format(name, value[i])))
+                        line_edits.append((last_seen_property_line + 1, INSERT, format_line(name, value[i])))
                     else:
                         # Check/edit existing values.
                         check_edit_value(property_new_line_indexes[field_name][i], value[i])
@@ -621,7 +632,7 @@ def edit_config_file(new_config_item, section_index):
                     last_seen_property_line = property_new_line_indexes[field_name]
                 else:
                     # Add new value.
-                    line_edits.append((last_seen_property_line + 1, INSERT, "{}={}".format(name, value)))
+                    line_edits.append((last_seen_property_line + 1, INSERT, format_line(name, value)))
 
         # Process line edits.
         for edit in sorted(line_edits, reverse=True):
@@ -713,9 +724,9 @@ def edit_config_file(new_config_item, section_index):
                 continue
             if type(new_config_item.__dict__[field_name]) == list:
                 for value in new_config_item.__dict__[field_name]:
-                    new_lines.append("{}={}".format(name, value))
+                    new_lines.append(format_line(name, value))
             else:
-                new_lines.append("{}={}".format(name, new_config_item.__dict__[field_name]))
+                new_lines.append(format_line(name, new_config_item.__dict__[field_name]))
     elif new_config_item == None and section_index == total_sections - 1:
         # We deleted the last section. Trim any blank lines we left at the end of the file.
         while len(new_lines) > 0 and len(new_lines[-1].strip()) == 0:

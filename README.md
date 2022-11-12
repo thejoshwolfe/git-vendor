@@ -25,7 +25,7 @@ TODO: usage examples that demonstrate how this tool solves those problems.
     - [x] Convenient command to support renaming/moving local vendored content.
     - [x] Convenient command to support editing the config file.
     - [x] Validation for a manually edited config file.
-    - [ ] Support some kind of quoting/escaping syntax for unusual characters in the config file.
+    - [x] Quoting unusual characters in the config file uses shell syntax using Python's `shlex` module.
 - [x] File name based include/exclude filtering of external content. The syntax is very similar to the gitignore syntax.
 - [x] Vendoring a subdirectory instead of the entire project's directory structure. E.g. with `--dir=vendor/foo --subdir=src`, the external file `src/bar.txt` in your project becomes as `vendor/foo/bar.txt` with no `src` component.
 - [x] Support maintaining local patches to the external content (in addition to subdir and include/exclude filters) that survive incoming updates to the third-party content.
