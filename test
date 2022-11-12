@@ -25,6 +25,93 @@ def main():
         f()
 
 @test
+def file_name_filtering(test_name):
+    module = import_a_file("./git-vendor")
+    MAYBE = module.MAYBE
+
+    def t(pattern, path, return_maybe_on_prefix_match=False):
+        fn = module.compile_filter(pattern, "--test-pattern=" + pattern, return_maybe_on_prefix_match=return_maybe_on_prefix_match)
+        if path.endswith("/"):
+            is_tree = True
+            path = path[:-1]
+        else:
+            is_tree = False
+        return fn(is_tree, path.split("/"))
+
+    assert t("/a/", "a/")
+    assert t("/a/", "parent/a/") == False
+    assert t("a/", "parent/a/")
+    assert t("a/", "parent/a") == False
+    assert t("a", "parent/a")
+
+    assert t("**/a/b", "a/b")
+    assert t("**/a/b", "a/x") == False
+    assert t("**/a/b", "x/b") == False
+    assert t("**/a/b", "parent/a/b")
+    assert t("**/a/b", "parent/a/b/child") == False
+    assert t("**/a/b", "a/b/child") == False
+
+    assert t("a/**/z", "a/z")
+    assert t("a/**/z", "parent/a/z") == False
+    assert t("**/a/**/z", "parent/a/z")
+    assert t("a/**/z", "a/m/n/o/z")
+    assert t("a/**/z", "a/m/n/o/z/child") == False
+
+    assert t("*/", "a") == False
+    assert t("*/", "a/")
+    assert t("*/", "a/b") == False
+    assert t("*/", "a/b/")
+    assert t("/*/", "a") == False
+    assert t("/*/", "a/")
+    assert t("/*/", "a/b") == False
+    assert t("/*/", "a/b/") == False
+
+    #                                vvvvv         vvvvv
+    assert t("**/a/a/b/**/b/b/a", "a/a/a/b/b/a/a/b/b/b/a")
+    #                              vvvvv       vvvvv
+    assert t("**/a/a/b/**/b/b/a", "a/b/b/a/a/b/b/b/a")
+    #                                  vvvvv     vvvvv
+    assert t("**/a/a/b/**/b/b/a", "a/a/a/b/b/a/a/b/b/a")
+    #                                vvvvv         vvvvv
+    assert t("**/a/a/b/**/b/b/a", "a/a/a/b/a/b/a/a/b/b/a")
+    #                                        vvvvv
+    assert t("**/a/a/b/**/b/b/a", "a/b/a/b/a/a/b/b/a") == False
+    #                              vvvvv
+    assert t("**/a/a/b/**/b/b/a", "a/a/b/b/a") == False
+    #                              vvvvv vvvvv
+    assert t("**/a/a/b/**/b/b/a", "a/a/b/b/b/a")
+
+    assert t("*.txt", "a.txt")
+    assert t("*.txt", "asdf.txt")
+    assert t("*.txt", "asdf.txt.jpg") == False
+    assert t("*.txt", "asdf.jpg") == False
+    assert t(".*.swo", ".test.py.swo")
+    assert t(".*.swo", "test.py.swo") == False
+
+    assert t("src/**/*_test.go", "src/main_test.go")
+    assert t("src/**/*_test.go", "src/decoder/decoder_test.go")
+    assert t("src/**/*_test.go", "src/decoder/decoder_test.pb.go") == False
+    assert t("src/**/*_test.go", "vendor/codelib/decoder_test.go") == False
+    assert t("src/**/*_test.*.go", "src/decoder/decoder_test.pb.go")
+    assert t("src/**/*_test.*.go", "src/decoder/decoder_test.go") == False
+    assert t("doc*/**/README*", "docs/api/README.md")
+    assert t("doc*/**/README*", "doc/api/README.txt")
+    assert t("doc*/**/README*", "docs/README")
+    assert t("doc*/**/README*", "doctored/malware/README (final).exe")
+
+    assert t("a/b", "a", return_maybe_on_prefix_match=True) == False
+    assert t("a/b", "a/", return_maybe_on_prefix_match=True) == MAYBE
+    assert t("a/b", "a/b", return_maybe_on_prefix_match=True) == True
+    assert t("a/b", "a/b/", return_maybe_on_prefix_match=True) == True
+    assert t("a/b", "a/b/c", return_maybe_on_prefix_match=True) == False
+    assert t("a/b", "c/a/b", return_maybe_on_prefix_match=True) == False
+    assert t("src/**/*.zig", "src/", return_maybe_on_prefix_match=True) == MAYBE
+    assert t("src/**/*.zig", "src/README.md", return_maybe_on_prefix_match=True) == False
+    assert t("src/**/*.zig", "src/build.zig", return_maybe_on_prefix_match=True) == True
+    assert t("src/**/*.zig", "src/core/", return_maybe_on_prefix_match=True) == MAYBE
+    assert t("src/**/*.zig", "src/core/stream.zig", return_maybe_on_prefix_match=True) == True
+
+@test
 def follow_branch(test_name):
     down, up = init(test_name, "downstream", "upstream")
     git_vendor("add",
@@ -256,6 +343,30 @@ def get_git_env():
     git_env["GIT_AUTHOR_DATE"] = git_env["GIT_COMMITTER_DATE"] = earliest_allowed_time
 
     return git_env
+
+def import_a_file(path):
+    from importlib.util import spec_from_loader, module_from_spec
+    from importlib.machinery import SourceFileLoader
+
+    module_name = os.path.basename(path)
+
+    with attribute_patcher(sys, "dont_write_bytecode", True):
+        spec = spec_from_loader(module_name, SourceFileLoader(module_name, path))
+        module = module_from_spec(spec)
+        spec.loader.exec_module(module)
+
+        return module
+
+class attribute_patcher:
+    def __init__(self, obj, attr, value):
+        self.obj = obj
+        self.attr = attr
+        self.value = value
+    def __enter__(self):
+        self.old_value = getattr(self.obj, self.attr)
+        setattr(self.obj, self.attr, self.value)
+    def __exit__(self, *args):
+        setattr(self.obj, self.attr, self.old_value)
 
 if __name__ == "__main__":
     main()

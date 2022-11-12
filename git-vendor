@@ -1171,6 +1171,9 @@ def compile_filter(pattern, error_hint, *, return_maybe_on_prefix_match=False):
     # See `git help gitignore`.
     if "//" in pattern or pattern == "/":
         raise ValidationError("Invalid pattern: " + error_hint)
+    if pattern == "**/":
+        # If we don't special case this, it would get reported as "ending with **", which is a little confusing.
+        raise ValidationError("To match any directory, please use the pattern */ instead: " + error_hint)
     # Consume leading and trailing slashes.
     tree_only = False
     absolute = False
