@@ -19,7 +19,6 @@ TODO: usage examples that demonstrate how this tool solves those problems.
     - [x] Pinning content to a specific tag with `--pin-to-tag`. In this mode, the third-party server is assumed to never update the ref, and is not queried in the typical case.
     - [x] Pinning content to a specific commit with `--pin-to-commit`.
     - [x] Hypothetical untested support for repos using sha256 instead of sha1.
-    - [ ] Support for remotes that don't have the `allow-tip-sha1-in-want` capability, such as `https://git.ffmpeg.org/ffmpeg.git`. I can't figure out how to tell if a git remote has this capability before trying and failing a `git fetch`. Somehow `git submodule update` knows how to do it. Maybe it's time to read the source.
 - [x] Configuration information stored in a file `.git-vendor-config` in your repo. Automatically gets edited as appropriate while maintaining formatting and comments.
     - [x] Convenient command to support removing vendored content.
     - [x] Convenient command to support renaming/moving local vendored content.
@@ -30,19 +29,19 @@ TODO: usage examples that demonstrate how this tool solves those problems.
 - [x] Vendoring a subdirectory instead of the entire project's directory structure. E.g. with `--dir=vendor/foo --subdir=src`, the external file `src/bar.txt` in your project becomes as `vendor/foo/bar.txt` with no `src` component.
 - [x] Support maintaining local patches to the external content (in addition to subdir and include/exclude filters) that survive incoming updates to the third-party content.
     - [x] Support viewing the patches in an interface like `git diff`.
+    - [ ] Reconsider whether this is even a good idea. There might be no use case for this.
     - [ ] Support exporting the patches to an external repository of the third-party content to facilitate submitting the changes upstream.
 - [x] Support for also vendoring the submodules of a vendored project while following the proper commit pointers. (They can be omitted with a filename based exclude rule.)
 - [ ] Proper documentation for command line interface and config file.
     - [ ] Cleanup argparse CLI so that more options are accepted as positional arguments. E.g. `git-vendor mv --dir a/b/c --new-dir a/z/c` should instead be expressible as `git-vendor mv a/{b,z}/c` (in Bash).
 - [ ] Unit tests for corner case error handling. (Code coverage?)
     - [ ] Probably should suppress stack traces on all `CalledProcessError`.
-- [ ] Support for non-utf8 file names. (This means proper juggling of bytes vs strings in Python 3; currently the code assumes everything is valid utf8 and converts it all to `str` for convenience. Alas, Python 2's str would have actually worked better; see [utf8everywhere.org](https://utf8everywhere.org/).)
 - [ ] Audit local named ref usage and how it relates to objects being orphaned and gc'ed too soon, or perhaps never being gc'ed when they should.
 - [ ] Declare 1.0 stable, and move the remaining unfinished items in this list to GitHub Issues.
 
 ## git-vendor vs other options
 
-| | `git submodule` | `git subtree` | [ingydotnet/git-subrepo](https://github.com/ingydotnet/git-subrepo) | [brettlangdon/git-vendor](https://github.com/brettlangdon/git-vendor) | thejoshwolfe/git-vendor (this) | manual copy |
+| | `git submodule` | `git subtree` | [git-subrepo (ingydotnet)](https://github.com/ingydotnet/git-subrepo) | [git-vendor (brettlangdon)](https://github.com/brettlangdon/git-vendor) | git-vendor (this repo) | manual copy |
 | --- | --- | --- | --- | --- | --- | --- |
 | just works for collaborators | ❌[1] | ✔️ | ✔️ | ✔️ | ✔️ | ✔️ |
 | version-controlled config file | ✔️ | ❌ | ✔️ | ❌[2] | ✔️ | ❌ |
