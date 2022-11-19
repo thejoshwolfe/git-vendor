@@ -70,6 +70,8 @@ def main():
         do_rename(args.dir, args.new_dir, args.allow_dir_exists)
     elif args.command in ("save-edits", "save-patch"):
         assert args.dir
+        if not os.getenv("GIT_VENDOR_ALLOW_EXPERIMENTAL_TREE_PATCH"):
+            parser.error(args.command + " not allowed without enabling experimental features.")
         do_save_patch(args.dir)
     elif args.command in ("diff-edits", "diff-patch"):
         assert args.dir

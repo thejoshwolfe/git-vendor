@@ -7,7 +7,6 @@ The main advantage of using `git-vendor` over other solutions (as of writing thi
 Example use cases:
 
 * You depend on an open source library (or a specific version of it) that isn't available in your system package manager. You opt to simply copy the entire source code at a tagged version into your project. You delete all the examples, unit tests, and CI/CD configuration from that project, since it doesn't matter for your project.
-* You're trying to build the above library with CMake, and it requires several modifications to integrate into your build system. Then you find a bug in the above library's code, and you patch that too. The upstream maintainers may or may not merge any of these changes into their code base. Whenever you update the library to a newer tagged version, you want to make sure the patches you've applied persist.
 * Your organization maintains code in multiple repositories. An API schema in a server's repo is also needed to build a client in a different repo. Currently the client repo adds the entire server's codebase as a git submodule to just have access to the API schema, but that dependency is slowing down and complicating your CI/CD pipelines as well as straining the Principle of Least Privilege. You decide to copy the API schema alone into your client repo, and you need a way to keep the copy up to date with the server repo's release branch.
 
 TODO: usage examples that demonstrate how this tool solves those problems.
@@ -27,10 +26,6 @@ TODO: usage examples that demonstrate how this tool solves those problems.
     - [x] Quoting unusual characters in the config file uses shell syntax using Python's `shlex` module.
 - [x] File name based include/exclude filtering of external content. The syntax is very similar to the gitignore syntax.
 - [x] Vendoring a subdirectory instead of the entire project's directory structure. E.g. with `--dir=vendor/foo --subdir=src`, the external file `src/bar.txt` in your project becomes as `vendor/foo/bar.txt` with no `src` component.
-- [x] Support maintaining local patches to the external content (in addition to subdir and include/exclude filters) that survive incoming updates to the third-party content.
-    - [x] Support viewing the patches in an interface like `git diff`.
-    - [ ] Reconsider whether this is even a good idea. There might be no use case for this.
-    - [ ] Support exporting the patches to an external repository of the third-party content to facilitate submitting the changes upstream.
 - [x] Support for also vendoring the submodules of a vendored project while following the proper commit pointers. (They can be omitted with a filename based exclude rule.)
 - [ ] Proper documentation for command line interface and config file.
     - [ ] Cleanup argparse CLI so that more options are accepted as positional arguments. E.g. `git-vendor mv --dir a/b/c --new-dir a/z/c` should instead be expressible as `git-vendor mv a/{b,z}/c` (in Bash).
@@ -45,10 +40,10 @@ TODO: usage examples that demonstrate how this tool solves those problems.
 | --- | --- | --- | --- | --- | --- | --- |
 | just works for collaborators | ❌[1] | ✔️ | ✔️ | ✔️ | ✔️ | ✔️ |
 | version-controlled config file | ✔️ | ❌ | ✔️ | ❌[2] | ✔️ | ❌ |
-| push as maintainer | ✔️ | ✔️ | ✔️ | ✔️ | ❌ TODO | ❌ |
+| push as maintainer | ✔️ | ✔️ | ✔️ | ✔️ | ❌ | ❌ |
 | fully a git repo | ✔️ | ❌ | ❌ | ❌ | ❌ | ❌ |
 | file name based filtering | ❌ | ❌ | ❌ | ❌ | ✔️ | ✔️ |
-| non-trivial patches | ❌[3] | ❌[3] | ❌[3] | ❌[3] | ❌[3] TODO | ✔️ |
+| non-trivial patches | ❌[3] | ❌[3] | ❌[3] | ❌[3] | ❌[3] | ✔️ |
 | implementation | built-in | built-in | bash | sh | python | manual |
 | stars on github | celebrity | celebrity | lots | modest | few | |
 
