@@ -21,6 +21,7 @@ TODO: usage examples that demonstrate how this tool solves those problems.
 - [x] Configuration information stored in a file `.git-vendor-config` in your repo. Automatically gets edited as appropriate while maintaining formatting and comments.
     - [x] Convenient command to support removing vendored content.
     - [x] Convenient command to support renaming/moving local vendored content.
+    - [ ] TODO: Make sure the rename doesn't cause a primary key collision with --allow-dir-exists.
     - [x] Convenient command to support editing the config file.
     - [x] Validation for a manually edited config file.
     - [x] Quoting unusual characters in the config file uses shell syntax using Python's `shlex` module.
@@ -28,7 +29,8 @@ TODO: usage examples that demonstrate how this tool solves those problems.
 - [x] Vendoring a subdirectory instead of the entire project's directory structure. E.g. with `--dir=vendor/foo --subdir=src`, the external file `src/bar.txt` in your project becomes as `vendor/foo/bar.txt` with no `src` component.
 - [x] Support for also vendoring the submodules of a vendored project while following the proper commit pointers. (They can be omitted with a filename based exclude rule.)
 - [ ] Proper documentation for command line interface and config file.
-    - [ ] Cleanup argparse CLI so that more options are accepted as positional arguments. E.g. `git-vendor mv --dir a/b/c --new-dir a/z/c` should instead be expressible as `git-vendor mv a/{b,z}/c` (in Bash).
+    - [x] Cleanup argparse CLI so that more options are accepted as positional arguments. E.g. `git-vendor mv --dir a/b/c --new-dir a/z/c` should instead be expressible as `git-vendor mv a/{b,z}/c` (in Bash).
+- [ ] During `git-vendor add`, make `--follow-branch <branch>` the default, where `<branch>` is determined via `git remote show`.
 - [ ] Unit tests for corner case error handling. (Code coverage?)
     - [ ] Probably should suppress stack traces on all `CalledProcessError`.
 - [ ] Audit local named ref usage and how it relates to objects being orphaned and gc'ed too soon, or perhaps never being gc'ed when they should.
