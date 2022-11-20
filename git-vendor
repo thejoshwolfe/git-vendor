@@ -11,7 +11,7 @@ class CliOptions:
     super_verbose = False
     dry_run = False
 
-def main():
+def cli():
     import argparse
 
     def issue(n):
@@ -24,7 +24,11 @@ def main():
     def add_parser(subparsers, name, *aliases, **kwargs):
         parser = subparsers.add_parser(name, aliases=aliases, **kwargs)
         subparsers_map[name] = parser
+        for alias in aliases:
+            subparsers_map[alias] = parser
         return parser
+
+    # Argument definitions that will be used multiple times.
 
     def add_verbose(parser, dest="_subparser_verbose"):
         parser.add_argument("-v", "--verbose", action="store_true", dest=dest, help=
@@ -35,108 +39,176 @@ def main():
         parser.add_argument("--dry-run", action="store_true", dest=dest, help=
             "Do not cause any changes, but show what would be done.")
 
-    parser = argparse.ArgumentParser()
+    def add_dir_as_arg_or_kwarg(parser, to_be="is"):
+        parser.add_argument("dir", nargs="?", help=
+            "The directory in your repo where the vendored content {} located. "
+            "This option (or --dir) is required.".format(to_be))
+        parser.add_argument("--dir", metavar="dir", dest="_kwarg_dir", help=
+            "Alternate way of specifying the 'dir' argument.")
+    UNSPECIFIED_AND_NOT_REQUIRED = object()
+    def add_optional_dir(parser):
+        parser.add_argument("dir", nargs="?", default=UNSPECIFIED_AND_NOT_REQUIRED, help=
+            "The single directory to operate on. "
+            "If unspecified, operate on all of them.")
+        parser.add_argument("--dir", metavar="dir", dest="_kwarg_dir", help=
+            "Alternate way of specifying the 'dir' argument.")
+    def add_dir_and_new_dir(parser):
+        parser.add_argument("dir", nargs="?", help=
+            "The vendored directory to move.")
+        parser.add_argument("--dir", metavar="dir", dest="_kwarg_dir", help=
+            "Alternate way of specifying the 'dir' argument.")
+        parser.add_argument("new_dir", metavar="new-dir", nargs="?", help=
+            "The destination for the move.")
+        parser.add_argument("--new-dir", metavar="new-dir", dest="_kwarg_new_dir", help=
+            "Alternate way of specifying the 'new-dir' argument.")
 
+    def add_subdir(parser):
+        parser.add_argument("--subdir", help=
+            "Subdirectory within the external repo that is the root of the content to be vendored.")
+    def add_url(parser, required):
+        parser.add_argument("--url", required=required, help=
+            "URL of the external git repo. See `git help clone` for acceptable URL formats. "
+            "Note that relative paths are sometimes accepted by git, "
+            "but git-vendor does not allow local path URLs that are relative paths; "
+            "use absolute paths instead (see also issue {} ).".format(issue(6)))
+    def add_follow_or_pin(parser, required):
+        follow_group = parser.add_mutually_exclusive_group(required=required)
+        follow_group.add_argument("--follow-branch", "--branch", metavar="BRANCH", help=
+            "A branch name identifies the commit of the external repo to use. "
+            "This method of identifying a commit communicates with the remote server "
+            "whenever updating the local content to check if the branch points to a new commit. "
+            "If the branch specified does not begin with 'refs/', then a prefix of 'refs/heads/' "
+            "is prepended automatically (this is how branches are named in git.). "
+            "If the given branch begins with 'refs/', then it will be used as-is, "
+            "regardless of whether it really refers to a branch (aka head). ")
+        follow_group.add_argument("--pin-to-tag", "--tag", metavar="TAG", help=
+            "A tag name identifies the commit of the external repo to use. "
+            "This method of identifying a commit only communicates with the remote server "
+            "on initial configuration or in any other case where the resolved commit is unknown/uncached locally. "
+            "If the given name does not begin with 'refs/', then a prefix of 'refs/tags/' "
+            "is prepended automatically (this is how tags are named in git.).")
+        follow_group.add_argument("--pin-to-commit", "--commit", metavar="COMMIT", help=
+            "Identifies a specific commit to be used from the external repo. "
+            "This method of identifying a commit only communicates with the remote server "
+            "on initial configuration or in any other case where the object data for the commit is not cached locally. "
+            "Note that this option may not work for all git server configurations; see {}".format(issue(4)))
+    def add_include_exclude(parser):
+        parser.add_argument("--include", action="append", metavar="PATTERN", help=
+            "Indicates that only certain content is to be included from the external repo. "
+            "The given patterns identify files by name in a syntax similar to `git help ignore`, but with some differences (see below). "
+            "If this option is unspecified, then all content is implicitly included. "
+            "This option can be specified multiple times, and the union of matches will be included. "
+            "When this option and --exclude are both specified, then --exclude is higher priority; "
+            "i.e. anything excluded by --exclude can never be un-excluded by --include or any other means. "
+            "The following specification for this option and --exclude is adapted from `git help ignore`: "
+            "1) The slash '/' is used as the directory separator. Separators may occur at the beginning, middle or end of each pattern. "
+            "2) If there is a separator at the beginning or middle (or both) of the pattern, "
+            "then the pattern is relative to the external repo root. "
+            "Otherwise the pattern may also match at any level within the external repo. "
+            "3) If there is a separator at the end of the pattern then the pattern will only match directories, "
+            "otherwise the pattern can match both files and directories. "
+            "For example, a pattern 'doc/frotz/' matches 'doc/frotz' directory, but not 'a/doc/frotz' directory; "
+            "however 'frotz/' matches 'frotz' and 'a/frotz' that is a directory (all paths are relative from the external repo root). "
+            "4) An asterisk '*' matches anything except a slash. The character '?' matches any one character except '/'. "
+            "The range notation, e.g. '[a-zA-Z]', can be used to match one of the characters in a range. "
+            "See https://docs.python.org/3/library/fnmatch.html for a more detailed description. "
+            "5) Two consecutive asterisks '**' in patterns matched against full pathname may have special meaning: "
+            "5a) A leading '**' followed by a slash means match in all directories. "
+            "For example, '**/foo' matches file or directory 'foo' anywhere, the same as pattern 'foo'. "
+            "'**/foo/bar' matches file or directory 'bar' anywhere that is directly under directory 'foo'. "
+            "5b) A trailing '/**' is *not allowed*. It is equivalent to omitting it, so please just omit it. "
+            "(This is a deviation from the `git help ignore` specification.) "
+            "5c) A slash followed by two consecutive asterisks then a slash matches zero or more directories. For example, 'a/**/b' matches 'a/b', 'a/x/b', 'a/x/y/b' and so on. "
+            "5d) Other consecutive asterisks are considered regular asterisks and will match according to the previous rules. "
+            "6) After splitting the pattern on '/', if any segment is '', '.', or '..', the pattern is invalid. "
+            "(This is a deviation from the `git help ignore` specification.) "
+            "7) Leading, trailing, or internal whitespace is supported by the normal quoting rules "
+            "(your shell, or the .git-vendor-config file syntax, etc.).")
+        parser.add_argument("--exclude", action="append", metavar="PATTERN", help=
+            "Indicates that some content is to be excluded from the external repo. "
+            "This option can be specified multiple times, and all matches are excluded. "
+            "The syntax for this option is identical to --include. "
+            "When this option and --include are both specified, then this option is higher priority; "
+            "i.e. anything excluded by this option can never be un-excluded by --include or any other means. "
+            "Note that if the external repo includes git submodules, those will be recursively fetched and included "
+            "unless they are excluded by this option (or not included by --include).")
+    def add_allow_dir_exists(parser, relevant_arg_name):
+        parser.add_argument("--allow-dir-exists", action="store_true", help=
+            "If the given '{}' already exists, this command will produce an error to prevent clobbering the existing content. "
+            "Specify this option to disable the error and allow clobbering the directory.".format(relevant_arg_name))
+
+    # Configure the parser and subparsers.
+    parser = argparse.ArgumentParser()
     add_verbose(parser, dest=None)
     add_dry_run(parser, dest=None)
 
-    subparsers = parser.add_subparsers(title="command", dest="command", required=True)
+    subparsers = parser.add_subparsers(title="command", dest="command", required=True, help=
+        "Give --help after a command to see more help.")
 
-    add_parser = add_parser(subparsers, "add", help=
+    subparser = add_parser(subparsers, "add", help=
         "Add a new vendored dir from a url.")
-    add_verbose(add_parser)
-    add_dry_run(add_parser)
-    add_parser.add_argument("dir", nargs="?", help=
-        "The directory in your repo where the vendored content will be located.")
-    add_parser.add_argument("--dir", metavar="dir", dest="_kwarg_dir", help=
-        "Alternate way of specifying the dir argument.")
-    add_parser.add_argument("--subdir", help=
-        "Subdirectory within the external repo that is the root of the content to be vendored.")
-    add_parser.add_argument("--url", help=
-        "URL of the external git repo. See `git help clone` for acceptable URL formats. "
-        "Note that relative paths are sometimes accepted by git, "
-        "but git-vendor does not allow local path URLs that are relative paths; "
-        "use absolute paths instead (see also issue {} ).".format(issue(6)))
-    follow_group = add_parser.add_mutually_exclusive_group(required=True)
-    follow_group.add_argument("--follow-branch", "--branch", metavar="BRANCH", help=
-        "A branch name identifies the commit of the external repo to use. "
-        "This method of identifying a commit communicates with the remote server "
-        "whenever updating the local content to check if the branch points to a new commit. "
-        "If the branch specified does not begin with 'refs/', then a prefix of 'refs/heads/' "
-        "is prepended automatically (this is how branches are named in git.). "
-        "If the given branch begins with 'refs/', then it will be used as-is, "
-        "regardless of whether it really refers to a branch (aka head). ")
-    follow_group.add_argument("--pin-to-tag", "--tag", metavar="TAG", help=
-        "A tag name identifies the commit of the external repo to use. "
-        "This method of identifying a commit only communicates with the remote server "
-        "on initial configuration or in any other case where the resolved commit is unknown/uncached locally. "
-        "If the given name does not begin with 'refs/', then a prefix of 'refs/tags/' "
-        "is prepended automatically (this is how tags are named in git.).")
-    follow_group.add_argument("--pin-to-commit", "--commit", metavar="COMMIT", help=
-        "Identifies a specific commit to be used from the external repo. "
-        "This method of identifying a commit only communicates with the remote server "
-        "on initial configuration or in any other case where the object data for the commit is not cached locally. "
-        "Note that this option may not work for all git server configurations; see {}".format(issue(4)))
-    add_parser.add_argument("--include", action="append", metavar="PATTERN", help=
-        "Indicates that only certain content is to be included from the external repo. "
-        "The given patterns identify files by name in a syntax similar to `git help ignore`, but with some differences (see below). "
-        "If this option is unspecified, then all content is implicitly included. "
-        "This option can be specified multiple times, and the union of matches will be included. "
-        "When this option and --exclude are both specified, then --exclude is higher priority; "
-        "i.e. anything excluded by --exclude can never be un-excluded by --include or any other means. "
-        "The following specification for this option and --exclude is adapted from `git help ignore`: "
-        "1) The slash '/' is used as the directory separator. Separators may occur at the beginning, middle or end of each pattern. "
-        "2) If there is a separator at the beginning or middle (or both) of the pattern, "
-        "then the pattern is relative to the external repo root. "
-        "Otherwise the pattern may also match at any level within the external repo. "
-        "3) If there is a separator at the end of the pattern then the pattern will only match directories, "
-        "otherwise the pattern can match both files and directories. "
-        "For example, a pattern 'doc/frotz/' matches 'doc/frotz' directory, but not 'a/doc/frotz' directory; "
-        "however 'frotz/' matches 'frotz' and 'a/frotz' that is a directory (all paths are relative from the external repo root). "
-        "4) An asterisk '*' matches anything except a slash. The character '?' matches any one character except '/'. "
-        "The range notation, e.g. '[a-zA-Z]', can be used to match one of the characters in a range. "
-        "See https://docs.python.org/3/library/fnmatch.html for a more detailed description. "
-        "5) Two consecutive asterisks '**' in patterns matched against full pathname may have special meaning: "
-        "5a) A leading '**' followed by a slash means match in all directories. "
-        "For example, '**/foo' matches file or directory 'foo' anywhere, the same as pattern 'foo'. "
-        "'**/foo/bar' matches file or directory 'bar' anywhere that is directly under directory 'foo'. "
-        "5b) A trailing '/**' is *not allowed*. It is equivalent to omitting it, so please just omit it. "
-        "(This is a deviation from the `git help ignore` specification.) "
-        "5c) A slash followed by two consecutive asterisks then a slash matches zero or more directories. For example, 'a/**/b' matches 'a/b', 'a/x/b', 'a/x/y/b' and so on. "
-        "5d) Other consecutive asterisks are considered regular asterisks and will match according to the previous rules. "
-        "6) After splitting the pattern on '/', if any segment is '', '.', or '..', the pattern is invalid. "
-        "(This is a deviation from the `git help ignore` specification.) "
-        "7) Leading, trailing, or internal whitespace is supported by the normal quoting rules "
-        "(your shell, or the .git-vendor-config file syntax, etc.).")
-    add_parser.add_argument("--exclude", action="append", metavar="PATTERN", help=
-        "Indicates that some content is to be excluded from the external repo. "
-        "This option can be specified multiple times, and all matches are excluded. "
-        "The syntax for this option is identical to --include. "
-        "When this option and --include are both specified, then this option is higher priority; "
-        "i.e. anything excluded by this option can never be un-excluded by --include or any other means. "
-        "Note that if the external repo includes git submodules, those will be recursively fetched and included "
-        "unless they are excluded by this option (or not included by --include).")
-    add_parser.add_argument("--allow-dir-exists", action="store_true", help=
-        "If the given dir already exists, this command will produce an error to prevent clobbering the existing content. "
-        "Specify this option to disable the error and allow clobbering the directory.")
+    add_verbose(subparser)
+    add_dry_run(subparser)
+    add_dir_as_arg_or_kwarg(subparser, to_be="will be")
+    add_subdir(subparser)
+    add_url(subparser, True)
+    add_follow_or_pin(subparser, True)
+    add_include_exclude(subparser)
+    add_allow_dir_exists(subparser, "dir")
 
-    #add_parser.add_argument("--new-dir")
+    subparser = add_parser(subparsers, "set", help=
+        "Edits the settings for a vendored dir. "
+        "This option accepts much the same options as 'add', "
+        "however the location of the vendored dir cannot be changed with this option; "
+        "see the 'rename' command for that instead.")
+    add_verbose(subparser)
+    add_dry_run(subparser)
+    add_dir_as_arg_or_kwarg(subparser)
+    add_subdir(subparser)
+    add_url(subparser, False)
+    add_follow_or_pin(subparser, False)
+    add_include_exclude(subparser)
 
-    #parser.add_argument("command", choices=[
-    #    "add",
-    #    "set",
-    #    "update", "status",
-    #    "ls", "list",
-    #    "rm", "remove",
-    #    "mv", "rename",
-    #    "save-edits", "save-patch",
-    #    "diff-edits", "diff-patch",
-    #])
+    for name, aliases, help_content in [
+        ("update", ["up"],
+            "Download any necessary updates to the vendored content, and 'git add' the changes to the vendored dirs."),
+        ("status", ["st"],
+            "Show what would happen on an 'update' command. Equivalent to 'update --dry-run'."),
+        ("remove", ["rm"],
+            "Remove the vendored content from the .git-vendor-config file, "
+            "and 'git add' the removal of the directory from this repo."),
+    ]:
+        subparser = add_parser(subparsers, name, *aliases, help=help_content)
+        add_verbose(subparser)
+        add_dry_run(subparser)
+        add_optional_dir(subparser)
 
+    subparser = add_parser(subparsers, "rename", "mv", help=
+        "Move the vendored content from 'dir' to 'new-dir', "
+        "edit the .git-vendor-config file appropriately, and 'git add' the changes.")
+    add_verbose(subparser)
+    add_dry_run(subparser)
+    add_dir_and_new_dir(subparser)
+    add_allow_dir_exists(subparser, "new-dir")
+
+    if os.environ.get("GIT_VENDOR_ALLOW_EXPERIMENTAL_TREE_PATCH", ""):
+        for name, aliases, help_content in [
+            ("save-edits", ["save-patch"],
+                "EXPERIMENTAL: save edits to vendored content."),
+            ("diff-edits", ["diff-patch"],
+                "EXPERIMENTAL: show saved edits to vendored content."),
+        ]:
+            subparser = add_parser(subparsers, name, *aliases, help=help_content)
+            add_verbose(subparser)
+            add_dry_run(subparser)
+            add_dir_as_arg_or_kwarg(subparser)
+
+    # The stdlib part of the arg parsing.
     args = parser.parse_args()
     def get_active_subparser():
         return subparsers_map[args.command]
-    print(args)
+
+    # Resolve complex arg parsing cases.
     for name in args.__dict__.keys():
         if name.startswith("_subparser_"):
             real_name = name[len("_subparser_"):]
@@ -144,18 +216,19 @@ def main():
             setattr(args, real_name, getattr(args, real_name) or getattr(args, name))
         elif name.startswith("_kwarg_"):
             real_name = name[len("_kwarg_"):]
-            # These are all action="store" (default) options that are required.
             real_value = getattr(args, real_name)
             alias_value = getattr(args, name)
             if real_value == None and alias_value == None:
-                get_active_subparser().error("one of the following arguments is required: {}/--{}".format(real_name, real_name))
-            if real_value != None and alias_value != None:
-                get_active_subparser().error("cannot specify both arguments: '{}' and '--{}'".format(real_name, real_name))
+                get_active_subparser().error("one of the following arguments is required: {0}/--{0}".format(real_name.replace("_", "-")))
+            if real_value not in (None, UNSPECIFIED_AND_NOT_REQUIRED) and alias_value != None:
+                get_active_subparser().error("cannot specify both arguments: '{0}' and '--{0}'".format(real_name.replace("_", "-")))
             if alias_value != None:
                 setattr(args, real_name, alias_value)
-    print(args)
+            elif real_value == UNSPECIFIED_AND_NOT_REQUIRED:
+                # This placeholder has served its purpose.
+                setattr(args, real_name, None)
 
-    sys.exit(123)
+    # Process general arguments.
     if args.verbose:
         CliOptions.verbose = True
     if args.dry_run:
@@ -168,6 +241,7 @@ def main():
         args.command = "update"
         CliOptions.dry_run = True
 
+    # Handle command
     if args.command == "add":
         assert args.url and args.dir
         assert args.follow_branch or args.pin_to_tag or args.pin_to_commit
@@ -175,7 +249,7 @@ def main():
     elif args.command == "set":
         assert args.dir
         do_set(args.url, args.follow_branch, args.pin_to_tag, args.pin_to_commit, args.dir, args.subdir, args.include, args.exclude)
-    elif args.command == "update":
+    elif args.command == "update": # and "status"
         do_update(args.dir)
     elif args.command in ("ls", "list"):
         do_list(args.dir)
@@ -187,8 +261,6 @@ def main():
         do_rename(args.dir, args.new_dir, args.allow_dir_exists)
     elif args.command in ("save-edits", "save-patch"):
         assert args.dir
-        if not os.getenv("GIT_VENDOR_ALLOW_EXPERIMENTAL_TREE_PATCH"):
-            parser.error(args.command + " not allowed without enabling experimental features.")
         do_save_patch(args.dir)
     elif args.command in ("diff-edits", "diff-patch"):
         assert args.dir
@@ -1671,6 +1743,6 @@ class ValidationError(Exception):
 
 if __name__ == "__main__":
     try:
-        main()
+        cli()
     except ValidationError as e:
         sys.exit("ERROR: " + str(e))
