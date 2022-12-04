@@ -22,6 +22,7 @@ TODO: usage examples that demonstrate how this tool solves those problems.
     - [x] Convenient command to support removing vendored content.
     - [x] Convenient command to support renaming/moving local vendored content.
     - [ ] TODO: Make sure the rename doesn't cause a primary key collision with --allow-dir-exists.
+    - [ ] TODO: Validate `dir` options from config file are canonical and unique.
     - [x] Convenient command to support editing the config file.
     - [x] Validation for a manually edited config file.
     - [x] Quoting unusual characters in the config file uses shell syntax using Python's `shlex` module.
@@ -42,7 +43,81 @@ Several config file options and command line options are equivalent,
 where `<name>=<value>` in the config file is equivalent to `--<name>=<value>` on the command line.
 The following is the list of options equivalent between the two:
 
+* `dir`
+* `url`
+* `follow-branch`
+* `pin-to-tag`
+* `pin-to-commit`
+* `subdir`
+* `include`
+* `exclude`
+
+The following option appears in config files, but is not intended to be edited directly.
+It is used internally by `git-vendor`:
+
+* `commit`
+
+There are several more options that only appear in the command line interface, documented below.
+
+### Config file
+
+The config file is comprised of lines delimited by `"\n"` LF UNIX style line endings.
+Leading and trailing whitespace of each line are ignored (via Python's
+[`str.strip()`](https://docs.python.org/3/library/stdtypes.html#str.strip) method).
+Then, if a line is blank or begins with `#`, it is ignored.
+
+If the config file is empty (after ignoring lines), the config file contains no sections,
+which is equivalent to the config file not existing.
+Otherwise, the config file is split into sections delimited by `---` lines.
+Empty sections are not allowed.
+(The number of `---` lines is exactly 1 less than the number of sections.)
+
+An option line contains three tokens: a name, an `=`, and a value.
+Whitespace surrounding each of these tokens is ignored.
+The option name must be one of the recognized config file option names.
+The option value is parsed using shell-like quoting rules via Python's
+[`shlex.split()`](https://docs.python.org/3/library/shlex.html#shlex.split) function.
+Typically, this means that no quoting is necessary, but if the value contains whitespace
+or other special shell characters, it must be quoted using `'` characters,
+or any other quoting recognized by `shlex.split()`.
+If `shlex.split()` finds multiple tokens, it is an error.
+
+If a line is not ignored, not `---`, and not recognized as an option line, it is an error.
+
+Each section must contain a `dir` option which uniquely identifies the section.
+In config files, the `dir` option is resolved relative to the repo root (where the config file is),
+and must be a *canonicalized relative path*.
+
+A **canonicalized relative path** is a path using `/` for directory separators regardless of platform,
+and must begin with a character other than `/`, must not contain `//`, must not contain any `.` or `..` segments,
+and on Windows must not contain `\`.
+
+### Common options
+
+These options appear in the config file and the command line API.
+
+#### `dir`
+
+The directory in your repo where the vendored content will be located.
+This option is required in every config file section and must be unique in the config file.
+In the config file, the path is resolved relative to your repo root
+and must be a *canonicalized relative path* (see above).
+
+On the command line, this option is is resolved relative to the cwd
+rather than the repo root and is canonicalized internally.
+Several commands take this option as either a position argument or a keyword arugment.
+
 <!--GEN_START-->
+#### `subdir`
+
+Subdirectory within the external repo that is the root of the content to be vendored.
+
+#### `url`
+
+URL of the external git repo. See `git help clone` for acceptable URL formats.
+Note that relative paths are sometimes accepted by git,
+but git-vendor does not allow local path URLs that are relative paths;
+use absolute paths instead (see also issue https://github.com/thejoshwolfe/git%2dvendor/issues/6 ).
 <!--GEN_END-->
 
 ## git-vendor vs other options
