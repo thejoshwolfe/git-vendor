@@ -13,16 +13,20 @@ class CliOptions:
 
 def cli():
     import argparse
+    formatter_class = argparse.HelpFormatter
+    if os.environ.get("GIT_VENDOR_RAW_HELP_FORMATTING", ""):
+        # Used by the documentation generator.
+        formatter_class = argparse.RawTextHelpFormatter
 
     def issue(n):
         # note the use of "%2d" instead of "-" is to prevent the url from getting brok-
         # en by the word wrapping in the default help formatter. (And the double "%%" is
-        # because help strings go through % str templating.
+        # because help strings go through % str templating.)
         return "https://github.com/thejoshwolfe/git%%2dvendor/issues/{}".format(n)
 
     subparsers_map = {}
     def add_parser(subparsers, name, *aliases, **kwargs):
-        parser = subparsers.add_parser(name, aliases=aliases, **kwargs)
+        parser = subparsers.add_parser(name, aliases=aliases, formatter_class=formatter_class, **kwargs)
         subparsers_map[name] = parser
         for alias in aliases:
             subparsers_map[alias] = parser
@@ -31,10 +35,11 @@ def cli():
     # Argument definitions that will be used multiple times.
 
     def add_verbose(parser, dest="_subparser_verbose"):
-        parser.add_argument("-v", "--verbose", action="store_true", dest=dest, help=
-            "Produce more output. The formatting and content is not specified; "
-            "it is intended for human eyes, not for machine parsing. "
-            "You can also set the GIT_VENDOR_SUPER_VERBOSE environment variable to non-blank for even more output.")
+        parser.add_argument("-v", "--verbose", action="store_true", dest=dest, help="\n".join([
+            "Produce more output. The formatting and content is not specified;",
+            "it is intended for human eyes, not for machine parsing.",
+            "You can also set the GIT_VENDOR_SUPER_VERBOSE environment variable to non-blank for even more output.",
+        ]))
     def add_dry_run(parser, dest="_subparser_dry_run"):
         parser.add_argument("--dry-run", action="store_true", dest=dest, help=
             "Do not cause any changes, but show what would be done.")
@@ -66,79 +71,93 @@ def cli():
         parser.add_argument("--subdir", help=
             "Subdirectory within the external repo that is the root of the content to be vendored.")
     def add_url(parser, required):
-        parser.add_argument("--url", required=required, help=
-            "URL of the external git repo. See `git help clone` for acceptable URL formats. "
-            "Note that relative paths are sometimes accepted by git, "
-            "but git-vendor does not allow local path URLs that are relative paths; "
-            "use absolute paths instead (see also issue {} ).".format(issue(6)))
+        parser.add_argument("--url", required=required, help="\n".join([
+            "URL of the external git repo. See `git help clone` for acceptable URL formats.",
+            "Note that relative paths are sometimes accepted by git,",
+            "but git-vendor does not allow local path URLs that are relative paths;",
+            "use absolute paths instead (see also issue {} ).".format(issue(6)),
+        ]))
     def add_follow_or_pin(parser, required):
         follow_group = parser.add_mutually_exclusive_group(required=required)
-        follow_group.add_argument("--follow-branch", "--branch", metavar="BRANCH", help=
-            "A branch name identifies the commit of the external repo to use. "
-            "This method of identifying a commit communicates with the remote server "
-            "whenever updating the local content to check if the branch points to a new commit. "
-            "If the branch specified does not begin with 'refs/', then a prefix of 'refs/heads/' "
-            "is prepended automatically (this is how branches are named in git.). "
-            "If the given branch begins with 'refs/', then it will be used as-is, "
-            "regardless of whether it really refers to a branch (aka head). ")
-        follow_group.add_argument("--pin-to-tag", "--tag", metavar="TAG", help=
-            "A tag name identifies the commit of the external repo to use. "
-            "This method of identifying a commit only communicates with the remote server "
-            "on initial configuration or in any other case where the resolved commit is unknown/uncached locally. "
-            "If the given name does not begin with 'refs/', then a prefix of 'refs/tags/' "
-            "is prepended automatically (this is how tags are named in git.).")
-        follow_group.add_argument("--pin-to-commit", "--commit", metavar="COMMIT", help=
-            "Identifies a specific commit to be used from the external repo. "
-            "This method of identifying a commit only communicates with the remote server "
-            "on initial configuration or in any other case where the object data for the commit is not cached locally. "
-            "Note that this option may not work for all git server configurations; see {}".format(issue(4)))
+        follow_group.add_argument("--follow-branch", "--branch", metavar="BRANCH", help="\n".join([
+            "A branch name identifies the commit of the external repo to use.",
+            "This method of identifying a commit communicates with the remote server",
+            "whenever updating the local content to check if the branch points to a new commit.",
+            "If the branch specified does not begin with `refs/`, then a prefix of `refs/heads/`",
+            "is prepended automatically (this is how branches are named in git.).",
+            "If the given branch begins with `refs/`, then it will be used as-is,",
+            "regardless of whether it really refers to a branch (aka head).",
+        ]))
+        follow_group.add_argument("--pin-to-tag", "--tag", metavar="TAG", help="\n".join([
+            "A tag name identifies the commit of the external repo to use.",
+            "This method of identifying a commit only communicates with the remote server",
+            "on initial configuration or in any other case where the resolved commit is unknown/uncached locally.",
+            "If the given name does not begin with `refs/`, then a prefix of `refs/tags/`",
+            "is prepended automatically (this is how tags are named in git.).",
+        ]))
+        follow_group.add_argument("--pin-to-commit", "--commit", metavar="COMMIT", help="\n".join([
+            "Identifies a specific commit to be used from the external repo.",
+            "This method of identifying a commit only communicates with the remote server",
+            "on initial configuration or in any other case where the object data for the commit is not cached locally.",
+            "Note that this option may not work for all git server configurations; see {} .".format(issue(4)),
+        ]))
     def add_include_exclude(parser):
-        parser.add_argument("--include", action="append", metavar="PATTERN", help=
-            "Indicates that only certain content is to be included from the external repo. "
-            "The given patterns identify files by name in a syntax similar to `git help ignore`, but with some differences (see below). "
-            "If this option is unspecified, then all content is implicitly included. "
-            "This option can be specified multiple times, and the union of matches will be included. "
-            "When this option and --exclude are both specified, then --exclude is higher priority; "
-            "i.e. anything excluded by --exclude can never be un-excluded by --include or any other means. "
-            "The following specification for this option and --exclude is adapted from `git help ignore`: "
-            "1) The slash '/' is used as the directory separator. Separators may occur at the beginning, middle or end of each pattern. "
-            "2) If there is a separator at the beginning or middle (or both) of the pattern, "
-            "then the pattern is relative to the external repo root. "
-            "Otherwise the pattern may also match at any level within the external repo. "
-            "3) If there is a separator at the end of the pattern then the pattern will only match directories, "
-            "otherwise the pattern can match both files and directories. "
-            "For example, a pattern 'doc/frotz/' matches 'doc/frotz' directory, but not 'a/doc/frotz' directory; "
-            "however 'frotz/' matches 'frotz' and 'a/frotz' that is a directory (all paths are relative from the external repo root). "
-            "4) An asterisk '*' matches anything except a slash. The character '?' matches any one character except '/'. "
-            "The range notation, e.g. '[a-zA-Z]', can be used to match one of the characters in a range. "
-            "See https://docs.python.org/3/library/fnmatch.html for a more detailed description. "
-            "5) Two consecutive asterisks '**' in patterns matched against full pathname may have special meaning: "
-            "5a) A leading '**' followed by a slash means match in all directories. "
-            "For example, '**/foo' matches file or directory 'foo' anywhere, the same as pattern 'foo'. "
-            "'**/foo/bar' matches file or directory 'bar' anywhere that is directly under directory 'foo'. "
-            "5b) A trailing '/**' is *not allowed*. It is equivalent to omitting it, so please just omit it. "
-            "(This is a deviation from the `git help ignore` specification.) "
-            "5c) A slash followed by two consecutive asterisks then a slash matches zero or more directories. For example, 'a/**/b' matches 'a/b', 'a/x/b', 'a/x/y/b' and so on. "
-            "5d) Other consecutive asterisks are considered regular asterisks and will match according to the previous rules. "
-            "6) After splitting the pattern on '/', if any segment is '', '.', or '..', the pattern is invalid. "
-            "(This is a deviation from the `git help ignore` specification.) "
-            "7) Leading, trailing, or internal whitespace is supported by the normal quoting rules "
-            "(your shell, or the .git-vendor-config file syntax, etc.).")
-        parser.add_argument("--exclude", action="append", metavar="PATTERN", help=
-            "Indicates that some content is to be excluded from the external repo. "
-            "This option can be specified multiple times, and all matches are excluded. "
-            "The syntax for this option is identical to --include. "
-            "When this option and --include are both specified, then this option is higher priority; "
-            "i.e. anything excluded by this option can never be un-excluded by --include or any other means. "
-            "Note that if the external repo includes git submodules, those will be recursively fetched and included "
-            "unless they are excluded by this option (or not included by --include).")
+        parser.add_argument("--include", action="append", metavar="PATTERN", help="\n".join([
+            "Indicates that only certain content is to be included from the external repo.",
+            "The given patterns identify files by name in a syntax similar to `git help ignore`,",
+            "but with some differences (see below).",
+            " ",
+            "If this option is unspecified, then all content is implicitly included.",
+            "This option can be specified multiple times, and the union of matches will be included.",
+            "When this option and --exclude are both specified, then --exclude is higher priority;",
+            "i.e. anything excluded by --exclude can never be un-excluded by --include or any other means.",
+            " ",
+            "The following specification for this option and --exclude is adapted from `git help ignore`:",
+            " ",
+            "1) The slash `/` is used as the directory separator.",
+            "   Separators may occur at the beginning, middle or end of each pattern.",
+            "2) If there is a separator at the beginning or middle (or both) of the pattern,",
+            "   then the pattern is relative to the external repo root.",
+            "   Otherwise the pattern may also match at any level within the external repo.",
+            "3) If there is a separator at the end of the pattern then the pattern will only match directories,",
+            "   otherwise the pattern can match both files and directories.",
+            "   For example, a pattern `doc/frotz/` matches `doc/frotz` directory, but not `a/doc/frotz` directory;",
+            "   however `frotz/` matches `frotz` and `a/frotz` that is a directory",
+            "   (all paths are relative from the external repo root).",
+            "4) An asterisk `*` matches anything except a slash. The character `?` matches any one character except `/`.",
+            "   The range notation, e.g. `[a-zA-Z]`, can be used to match one of the characters in a range.",
+            "   See https://docs.python.org/3/library/fnmatch.html for a more detailed description.",
+            "5) Two consecutive asterisks `**` in patterns matched against full pathname may have special meaning:",
+            "   5a) A leading `**` followed by a slash means match in all directories.",
+            "       For example, `**/foo` matches file or directory `foo` anywhere, the same as pattern `foo`.",
+            "       `**/foo/bar` matches file or directory `bar` anywhere that is directly under directory `foo`.",
+            "   5b) A trailing `/**` is *not allowed*. It is equivalent to omitting it, so please just omit it.",
+            "       (This is a deviation from the `git help ignore` specification.)",
+            "   5c) A slash followed by two consecutive asterisks then a slash matches zero or more directories.",
+            "       For example, `a/**/b` matches `a/b`, `a/x/b`, `a/x/y/b` and so on.",
+            "   5d) Other consecutive asterisks are considered regular asterisks and will match according to the previous rules.",
+            "6) After splitting the pattern on `/`, if any segment is empty, `.`, or `..`, the pattern is invalid.",
+            "   (This is a deviation from the `git help ignore` specification.)",
+            "7) Leading, trailing, or internal whitespace is supported by the normal quoting rules",
+            "   (your shell, or the .git-vendor-config file syntax, etc.).",
+        ]))
+        parser.add_argument("--exclude", action="append", metavar="PATTERN", help="\n".join([
+            "Indicates that some content is to be excluded from the external repo.",
+            "This option can be specified multiple times, and all matches are excluded.",
+            "The syntax for this option is identical to --include.",
+            "When this option and --include are both specified, then this option is higher priority;",
+            "i.e. anything excluded by this option can never be un-excluded by --include or any other means.",
+            " ",
+            "Note that if the external repo includes git submodules, those will be recursively fetched and included",
+            "unless they are excluded by this option (or not included by --include).",
+        ]))
     def add_allow_dir_exists(parser, relevant_arg_name):
         parser.add_argument("--allow-dir-exists", action="store_true", help=
             "If the given '{}' already exists, this command will produce an error to prevent clobbering the existing content. "
             "Specify this option to disable the error and allow clobbering the directory.".format(relevant_arg_name))
 
     # Configure the parser and subparsers.
-    parser = argparse.ArgumentParser()
+    parser = argparse.ArgumentParser(formatter_class=formatter_class)
     add_verbose(parser, dest=None)
     add_dry_run(parser, dest=None)
 
@@ -744,7 +763,7 @@ def edit_config_file(new_config_item, section_index):
     if len(lines) == 0:
         lines = [
             "# This is a git-vendor config file.",
-            "# For details see https://github.com/thejoshwolfe/git-vendor/blob/main/README.md",
+            "# For details see https://github.com/thejoshwolfe/git-vendor/blob/main/README.md#reference",
             "",
         ]
 

@@ -22,19 +22,192 @@ TODO: usage examples that demonstrate how this tool solves those problems.
     - [x] Convenient command to support removing vendored content.
     - [x] Convenient command to support renaming/moving local vendored content.
     - [ ] TODO: Make sure the rename doesn't cause a primary key collision with --allow-dir-exists.
+    - [ ] TODO: Validate `dir` options from config file are canonical and unique.
+    - [ ] TODO: Don't let backslashes in paths on Windows.
     - [x] Convenient command to support editing the config file.
     - [x] Validation for a manually edited config file.
     - [x] Quoting unusual characters in the config file uses shell syntax using Python's `shlex` module.
 - [x] File name based include/exclude filtering of external content. The syntax is very similar to the gitignore syntax.
 - [x] Vendoring a subdirectory instead of the entire project's directory structure. E.g. with `--dir=vendor/foo --subdir=src`, the external file `src/bar.txt` in your project becomes as `vendor/foo/bar.txt` with no `src` component.
 - [x] Support for also vendoring the submodules of a vendored project while following the proper commit pointers. (They can be omitted with a filename based exclude rule.)
-- [ ] Proper documentation for command line interface and config file.
+- [x] Proper documentation for command line interface and config file.
     - [x] Cleanup argparse CLI so that more options are accepted as positional arguments. E.g. `git-vendor mv --dir a/b/c --new-dir a/z/c` should instead be expressible as `git-vendor mv a/{b,z}/c` (in Bash).
 - [ ] During `git-vendor add`, make `--follow-branch <branch>` the default, where `<branch>` is determined via `git remote show`.
 - [ ] Unit tests for corner case error handling. (Code coverage?)
     - [ ] Probably should suppress stack traces on all `CalledProcessError`.
 - [ ] Audit local named ref usage and how it relates to objects being orphaned and gc'ed too soon, or perhaps never being gc'ed when they should.
 - [ ] Declare 1.0 stable, and move the remaining unfinished items in this list to GitHub Issues.
+
+## Reference
+
+Several config file options and command line options are equivalent,
+where `<name>=<value>` in the config file is equivalent to `--<name>=<value>` on the command line.
+The following is the list of options equivalent between the two:
+
+* `dir`
+* `url`
+* `follow-branch`
+* `pin-to-tag`
+* `pin-to-commit`
+* `subdir`
+* `include`
+* `exclude`
+
+The following option appears in config files, but is not intended to be edited directly.
+It is used internally by `git-vendor`:
+
+* `commit`
+
+There are several more options that only appear in the command line interface, documented below.
+
+### Config file
+
+The config file is comprised of lines delimited by `"\n"` LF UNIX style line endings.
+Leading and trailing whitespace of each line are ignored (via Python's
+[`str.strip()`](https://docs.python.org/3/library/stdtypes.html#str.strip) method).
+Then, if a line is blank or begins with `#`, it is ignored.
+
+If the config file is empty (after ignoring lines), the config file contains no sections,
+which is equivalent to the config file not existing.
+Otherwise, the config file is split into sections delimited by `---` lines.
+Empty sections are not allowed.
+(The number of `---` lines is exactly 1 less than the number of sections.)
+
+An option line contains three tokens: a name, an `=`, and a value.
+Whitespace surrounding each of these tokens is ignored.
+The option name must be one of the recognized config file option names.
+The option value is parsed using shell-like quoting rules via Python's
+[`shlex.split()`](https://docs.python.org/3/library/shlex.html#shlex.split) function.
+Typically, this means that no quoting is necessary, but if the value contains whitespace
+or other special shell characters, it must be quoted using `'` characters,
+or any other quoting recognized by `shlex.split()`.
+If `shlex.split()` finds multiple tokens, it is an error.
+
+If a line is not ignored, not `---`, and not recognized as an option line, it is an error.
+
+Each section must contain a `dir` option which uniquely identifies the section.
+In config files, the `dir` option is resolved relative to the repo root (where the config file is),
+and must be a *canonicalized relative path*.
+
+A **canonicalized relative path** is a path using `/` for directory separators regardless of platform,
+and must begin with a character other than `/`, must not contain `//`, must not contain any `.` or `..` segments,
+and on Windows must not contain `\`.
+
+### Common options
+
+These options appear in the config file and the command line API.
+
+#### `dir`
+
+The directory in your repo where the vendored content will be located.
+This option is required in every config file section and must be unique in the config file.
+In the config file, the path is resolved relative to your repo root
+and must be a *canonicalized relative path* (see above).
+
+On the command line, this option is is resolved relative to the cwd
+rather than the repo root and is canonicalized internally.
+Several commands take this option as either a position argument or a keyword arugment.
+
+<!--GEN_START-->
+#### `url`
+
+URL of the external git repo. See `git help clone` for acceptable URL formats.
+Note that relative paths are sometimes accepted by git,
+but git-vendor does not allow local path URLs that are relative paths;
+use absolute paths instead (see also issue https://github.com/thejoshwolfe/git-vendor/issues/6 ).
+
+#### `follow-branch`
+
+A branch name identifies the commit of the external repo to use.
+This method of identifying a commit communicates with the remote server
+whenever updating the local content to check if the branch points to a new commit.
+If the branch specified does not begin with `refs/`, then a prefix of `refs/heads/`
+is prepended automatically (this is how branches are named in git.).
+If the given branch begins with `refs/`, then it will be used as-is,
+regardless of whether it really refers to a branch (aka head).
+
+#### `pin-to-tag`
+
+A tag name identifies the commit of the external repo to use.
+This method of identifying a commit only communicates with the remote server
+on initial configuration or in any other case where the resolved commit is unknown/uncached locally.
+If the given name does not begin with `refs/`, then a prefix of `refs/tags/`
+is prepended automatically (this is how tags are named in git.).
+
+#### `pin-to-commit`
+
+Identifies a specific commit to be used from the external repo.
+This method of identifying a commit only communicates with the remote server
+on initial configuration or in any other case where the object data for the commit is not cached locally.
+Note that this option may not work for all git server configurations; see https://github.com/thejoshwolfe/git-vendor/issues/4 .
+
+#### `subdir`
+
+Subdirectory within the external repo that is the root of the content to be vendored.
+
+In the config file, this must be a *canonicalized relative path* (see above).
+
+#### `include`
+
+Indicates that only certain content is to be included from the external repo.
+The given patterns identify files by name in a syntax similar to `git help ignore`,
+but with some differences (see below).
+
+If this option is unspecified, then all content is implicitly included.
+This option can be specified multiple times, and the union of matches will be included.
+When this option and `exclude` are both specified, then `exclude` is higher priority;
+i.e. anything excluded by `exclude` can never be un-excluded by `include` or any other means.
+
+The following specification for this option and `exclude` is adapted from `git help ignore`:
+
+1) The slash `/` is used as the directory separator.
+   Separators may occur at the beginning, middle or end of each pattern.
+2) If there is a separator at the beginning or middle (or both) of the pattern,
+   then the pattern is relative to the external repo root.
+   Otherwise the pattern may also match at any level within the external repo.
+3) If there is a separator at the end of the pattern then the pattern will only match directories,
+   otherwise the pattern can match both files and directories.
+   For example, a pattern `doc/frotz/` matches `doc/frotz` directory, but not `a/doc/frotz` directory;
+   however `frotz/` matches `frotz` and `a/frotz` that is a directory
+   (all paths are relative from the external repo root).
+4) An asterisk `*` matches anything except a slash. The character `?` matches any one character except `/`.
+   The range notation, e.g. `[a-zA-Z]`, can be used to match one of the characters in a range.
+   See https://docs.python.org/3/library/fnmatch.html for a more detailed description.
+5) Two consecutive asterisks `**` in patterns matched against full pathname may have special meaning:
+   1)  A leading `**` followed by a slash means match in all directories.
+       For example, `**/foo` matches file or directory `foo` anywhere, the same as pattern `foo`.
+       `**/foo/bar` matches file or directory `bar` anywhere that is directly under directory `foo`.
+   2)  A trailing `/**` is *not allowed*. It is equivalent to omitting it, so please just omit it.
+       (This is a deviation from the `git help ignore` specification.)
+   3)  A slash followed by two consecutive asterisks then a slash matches zero or more directories.
+       For example, `a/**/b` matches `a/b`, `a/x/b`, `a/x/y/b` and so on.
+   4)  Other consecutive asterisks are considered regular asterisks and will match according to the previous rules.
+6) After splitting the pattern on `/`, if any segment is empty, `.`, or `..`, the pattern is invalid.
+   (This is a deviation from the `git help ignore` specification.)
+7) Leading, trailing, or internal whitespace is supported by the normal quoting rules
+   (your shell, or the .git-vendor-config file syntax, etc.).
+
+#### `exclude`
+
+Indicates that some content is to be excluded from the external repo.
+This option can be specified multiple times, and all matches are excluded.
+The syntax for this option is identical to `include`.
+When this option and `include` are both specified, then this option is higher priority;
+i.e. anything excluded by this option can never be un-excluded by `include` or any other means.
+
+Note that if the external repo includes git submodules, those will be recursively fetched and included
+unless they are excluded by this option (or not included by `include`).
+<!--GEN_END-->
+
+### Command line
+
+Much of the above information is duplicated in the command line help,
+which is fully accessible via:
+
+```
+git-vendor --help
+git-vendor [command] --help
+```
 
 ## git-vendor vs other options
 
