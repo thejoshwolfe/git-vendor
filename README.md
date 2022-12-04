@@ -108,16 +108,97 @@ rather than the repo root and is canonicalized internally.
 Several commands take this option as either a position argument or a keyword arugment.
 
 <!--GEN_START-->
-#### `subdir`
-
-Subdirectory within the external repo that is the root of the content to be vendored.
-
 #### `url`
 
 URL of the external git repo. See `git help clone` for acceptable URL formats.
 Note that relative paths are sometimes accepted by git,
 but git-vendor does not allow local path URLs that are relative paths;
-use absolute paths instead (see also issue https://github.com/thejoshwolfe/git%2dvendor/issues/6 ).
+use absolute paths instead (see also issue https://github.com/thejoshwolfe/git-vendor/issues/6 ).
+
+#### `follow-branch`
+
+A branch name identifies the commit of the external repo to use.
+This method of identifying a commit communicates with the remote server
+whenever updating the local content to check if the branch points to a new commit.
+If the branch specified does not begin with `refs/`, then a prefix of `refs/heads/`
+is prepended automatically (this is how branches are named in git.).
+If the given branch begins with `refs/`, then it will be used as-is,
+regardless of whether it really refers to a branch (aka head).
+
+#### `pin-to-tag`
+
+A tag name identifies the commit of the external repo to use.
+This method of identifying a commit only communicates with the remote server
+on initial configuration or in any other case where the resolved commit is unknown/uncached locally.
+If the given name does not begin with `refs/`, then a prefix of `refs/tags/`
+is prepended automatically (this is how tags are named in git.).
+
+#### `pin-to-commit`
+
+Identifies a specific commit to be used from the external repo.
+This method of identifying a commit only communicates with the remote server
+on initial configuration or in any other case where the object data for the commit is not cached locally.
+Note that this option may not work for all git server configurations; see https://github.com/thejoshwolfe/git-vendor/issues/4
+
+#### `subdir`
+
+Subdirectory within the external repo that is the root of the content to be vendored.
+
+In the config file, this must be a *canonicalized relative path* (see above).
+
+#### `include`
+
+Indicates that only certain content is to be included from the external repo.
+The given patterns identify files by name in a syntax similar to `git help ignore`,
+but with some differences (see below).
+
+If this option is unspecified, then all content is implicitly included.
+This option can be specified multiple times, and the union of matches will be included.
+When this option and `exclude` are both specified, then `exclude` is higher priority;
+i.e. anything excluded by `exclude` can never be un-excluded by `include` or any other means.
+
+The following specification for this option and `exclude` is adapted from `git help ignore`:
+
+1) The slash `/` is used as the directory separator.
+   Separators may occur at the beginning, middle or end of each pattern.
+2) If there is a separator at the beginning or middle (or both) of the pattern,
+   then the pattern is relative to the external repo root.
+   Otherwise the pattern may also match at any level within the external repo.
+3) If there is a separator at the end of the pattern then the pattern will only match directories,
+   otherwise the pattern can match both files and directories.
+   For example, a pattern `doc/frotz/` matches `doc/frotz` directory, but not `a/doc/frotz` directory;
+   however `frotz/` matches `frotz` and `a/frotz` that is a directory
+   (all paths are relative from the external repo root).
+4) An asterisk `*` matches anything except a slash. The character `?` matches any one character except `/`.
+   The range notation, e.g. `[a-zA-Z]`, can be used to match one of the characters in a range.
+   See https://docs.python.org/3/library/fnmatch.html for a more detailed description.
+5) Two consecutive asterisks `**` in patterns matched against full pathname may have special meaning:
+   1)  A leading `**` followed by a slash means match in all directories.
+       For example, `**/foo` matches file or directory `foo` anywhere, the same as pattern `foo`.
+       `**/foo/bar` matches file or directory `bar` anywhere that is directly under directory `foo`.
+   2)  A trailing `/**` is *not allowed*. It is equivalent to omitting it, so please just omit it.
+       (This is a deviation from the `git help ignore` specification.)
+   3)  A slash followed by two consecutive asterisks then a slash matches zero or more directories.
+       For example, `a/**/b` matches `a/b`, `a/x/b`, `a/x/y/b` and so on.
+   4)  Other consecutive asterisks are considered regular asterisks and will match according to the previous rules.
+6) After splitting the pattern on `/`, if any segment is empty, `.`, or `..`, the pattern is invalid.
+   (This is a deviation from the `git help ignore` specification.)
+7) Leading, trailing, or internal whitespace is supported by the normal quoting rules
+   (your shell, or the .git-vendor-config file syntax, etc.).
+
+#### `exclude`
+
+Indicates that some content is to be excluded from the external repo.
+This option can be specified multiple times, and all matches are excluded.
+The syntax for this option is identical to `include`.
+When this option and `include` are both specified, then this option is higher priority;
+i.e. anything excluded by this option can never be un-excluded by `include` or any other means.
+Note that if the external repo includes git submodules, those will be recursively fetched and included
+unless they are excluded by this option (or not included by `include`).
+
+### Command line
+
+TODO
 <!--GEN_END-->
 
 ## git-vendor vs other options
