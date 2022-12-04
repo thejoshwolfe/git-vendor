@@ -36,6 +36,15 @@ TODO: usage examples that demonstrate how this tool solves those problems.
 - [ ] Audit local named ref usage and how it relates to objects being orphaned and gc'ed too soon, or perhaps never being gc'ed when they should.
 - [ ] Declare 1.0 stable, and move the remaining unfinished items in this list to GitHub Issues.
 
+## Reference
+
+Several config file options and command line options are equivalent,
+where `<name>=<value>` in the config file is equivalent to `--<name>=<value>` on the command line.
+The following is the list of options equivalent between the two:
+
+<!--GEN_START-->
+<!--GEN_END-->
+
 ## git-vendor vs other options
 
 | | `git submodule` | `git subtree` | [git-subrepo (ingydotnet)](https://github.com/ingydotnet/git-subrepo) | [git-vendor (brettlangdon)](https://github.com/brettlangdon/git-vendor) | git-vendor (this repo) | manual copy |
