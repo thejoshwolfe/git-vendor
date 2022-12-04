@@ -23,6 +23,7 @@ TODO: usage examples that demonstrate how this tool solves those problems.
     - [x] Convenient command to support renaming/moving local vendored content.
     - [ ] TODO: Make sure the rename doesn't cause a primary key collision with --allow-dir-exists.
     - [ ] TODO: Validate `dir` options from config file are canonical and unique.
+    - [ ] TODO: Don't let backslashes in paths on Windows.
     - [x] Convenient command to support editing the config file.
     - [x] Validation for a manually edited config file.
     - [x] Quoting unusual characters in the config file uses shell syntax using Python's `shlex` module.
@@ -138,7 +139,7 @@ is prepended automatically (this is how tags are named in git.).
 Identifies a specific commit to be used from the external repo.
 This method of identifying a commit only communicates with the remote server
 on initial configuration or in any other case where the object data for the commit is not cached locally.
-Note that this option may not work for all git server configurations; see https://github.com/thejoshwolfe/git-vendor/issues/4
+Note that this option may not work for all git server configurations; see https://github.com/thejoshwolfe/git-vendor/issues/4 .
 
 #### `subdir`
 
@@ -193,6 +194,7 @@ This option can be specified multiple times, and all matches are excluded.
 The syntax for this option is identical to `include`.
 When this option and `include` are both specified, then this option is higher priority;
 i.e. anything excluded by this option can never be un-excluded by `include` or any other means.
+
 Note that if the external repo includes git submodules, those will be recursively fetched and included
 unless they are excluded by this option (or not included by `include`).
 

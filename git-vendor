@@ -99,7 +99,7 @@ def cli():
             "Identifies a specific commit to be used from the external repo.",
             "This method of identifying a commit only communicates with the remote server",
             "on initial configuration or in any other case where the object data for the commit is not cached locally.",
-            "Note that this option may not work for all git server configurations; see {}".format(issue(4)),
+            "Note that this option may not work for all git server configurations; see {} .".format(issue(4)),
         ]))
     def add_include_exclude(parser):
         parser.add_argument("--include", action="append", metavar="PATTERN", help="\n".join([
@@ -147,6 +147,7 @@ def cli():
             "The syntax for this option is identical to --include.",
             "When this option and --include are both specified, then this option is higher priority;",
             "i.e. anything excluded by this option can never be un-excluded by --include or any other means.",
+            " ",
             "Note that if the external repo includes git submodules, those will be recursively fetched and included",
             "unless they are excluded by this option (or not included by --include).",
         ]))
