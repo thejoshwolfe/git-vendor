@@ -215,6 +215,27 @@ def edit_config_through_cli(test_name):
         cwd=down)
     assert git_rev_parse_verify("HEAD^{tree}", cwd=down) == non_vendoring_entire_tree
 
+@test
+def sha256(test_name):
+    down, up = init(test_name, "downstream", "upstream", sha256=True)
+    commit_sha1 = git_rev_parse_verify("HEAD", cwd=up)
+
+    # Basic branch-follow setup.
+    git_vendor("add", "--dir", "vendor/up", "--url", up, "--follow-branch", "main", cwd=down)
+    git("commit", "-m", "vendor upstream", cwd=down)
+    assert git_rev_parse_verify("HEAD:vendor/up", cwd=down) == git_rev_parse_verify("HEAD^{tree}", cwd=up)
+
+    # Upstream goes forward. Downstream follows.
+    set_file(up, "b.txt")
+    git_vendor("update", cwd=down)
+    git("commit", "-m", "update", cwd=down)
+    assert git_rev_parse_verify("HEAD:vendor/up", cwd=down) == git_rev_parse_verify("HEAD^{tree}", cwd=up)
+
+    # Give a sha256 object name as a cli parameter.
+    git_vendor("set", "--dir", "vendor/up", "--pin-to-commit", commit_sha1, cwd=down)
+    git("commit", "-m", "pin vendored content", cwd=down)
+    assert git_rev_parse_verify("HEAD:vendor/up", cwd=down) == git_rev_parse_verify(commit_sha1 + "^{tree}", cwd=up)
+
 # TODO add new tests here
 
 @test
@@ -254,7 +275,7 @@ def clean_preserves_ignored(test_name):
     assert os.path.isfile(os.path.join(down, "vendor/up/trash.ignored"))
 
 
-def init(test_name, downstream_repo_dir_name, *upstream_repo_names):
+def init(test_name, downstream_repo_dir_name, *upstream_repo_names, sha256=False):
     test_dir = os.path.join(tests_root, test_name)
     try:
         shutil.rmtree(test_dir)
@@ -266,8 +287,12 @@ def init(test_name, downstream_repo_dir_name, *upstream_repo_names):
     for dir_name in (downstream_repo_dir_name,) + upstream_repo_names:
         repo_dir = os.path.join(test_dir, dir_name)
         os.makedirs(repo_dir)
+        init_args = []
+        if sha256:
+            init_args.append("--object-format=sha256")
         git("init",
             "--initial-branch", "main",
+            *init_args,
             cwd=repo_dir)
         git("commit",
             "--allow-empty",

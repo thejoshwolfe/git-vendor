@@ -17,7 +17,7 @@ TODO: usage examples that demonstrate how this tool solves those problems.
 - [x] Following a branch with `--follow-branch`, and checking for and incorporating changes since the last download.
     - [x] Pinning content to a specific tag with `--pin-to-tag`. In this mode, the third-party server is assumed to never update the ref, and is not queried in the typical case.
     - [x] Pinning content to a specific commit with `--pin-to-commit`.
-    - [x] Hypothetical untested support for repos using sha256 instead of sha1.
+    - [x] Rudimentary support for repos using sha256 instead of sha1.
 - [x] Configuration information stored in a file `.git-vendor-config` in your repo. Automatically gets edited as appropriate while maintaining formatting and comments.
     - [x] Convenient command to support removing vendored content.
     - [x] Convenient command to support renaming/moving local vendored content.
