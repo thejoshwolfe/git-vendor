@@ -71,12 +71,10 @@ def get_generated_contents():
 
         name_to_docs[name] = payload
 
-    common_options_section = "\n".join(
+    return "\n".join(
         "#### `{}`\n\n{}\n".format(name, name_to_docs[name])
         for name in common_options
     )
-
-    return common_options_section + "\n### Command line\n\nTODO\n"
 
 if __name__ == "__main__":
     main()

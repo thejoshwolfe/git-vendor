@@ -30,7 +30,7 @@ TODO: usage examples that demonstrate how this tool solves those problems.
 - [x] File name based include/exclude filtering of external content. The syntax is very similar to the gitignore syntax.
 - [x] Vendoring a subdirectory instead of the entire project's directory structure. E.g. with `--dir=vendor/foo --subdir=src`, the external file `src/bar.txt` in your project becomes as `vendor/foo/bar.txt` with no `src` component.
 - [x] Support for also vendoring the submodules of a vendored project while following the proper commit pointers. (They can be omitted with a filename based exclude rule.)
-- [ ] Proper documentation for command line interface and config file.
+- [x] Proper documentation for command line interface and config file.
     - [x] Cleanup argparse CLI so that more options are accepted as positional arguments. E.g. `git-vendor mv --dir a/b/c --new-dir a/z/c` should instead be expressible as `git-vendor mv a/{b,z}/c` (in Bash).
 - [ ] During `git-vendor add`, make `--follow-branch <branch>` the default, where `<branch>` is determined via `git remote show`.
 - [ ] Unit tests for corner case error handling. (Code coverage?)
@@ -197,11 +197,17 @@ i.e. anything excluded by this option can never be un-excluded by `include` or a
 
 Note that if the external repo includes git submodules, those will be recursively fetched and included
 unless they are excluded by this option (or not included by `include`).
+<!--GEN_END-->
 
 ### Command line
 
-TODO
-<!--GEN_END-->
+Much of the above information is duplicated in the command line help,
+which is fully accessible via:
+
+```
+git-vendor --help
+git-vendor [command] --help
+```
 
 ## git-vendor vs other options
 
