@@ -2,7 +2,7 @@
 
 Manage external git content in your git repo. This is like git submodules, but all the content is integrated into your content as though you copied it into your project and committed it normally. This means that collaborators running `git pull` will always get the content; no need to run any git submodule commands. Beyond initially copying the content, this tool can update the content when new changes are made by the upstream repository.
 
-The main advantage of using `git-vendor` over other solutions (as of writing this), is that you can customize the vendored content via filtering and patching, and these transformations are maintained while updating the vendored content to new versions provided by the third party. This is conceptionally similar to maintaining a fork of a submodule, but it's all part of your main repo; no submodules.
+The main advantage of using `git-vendor` over other solutions (as of writing this), is that you can customize the vendored content via file name based filtering, and the filtering is maintained while updating the vendored content to new versions provided by the third party. This is conceptionally similar to maintaining a fork of a submodule, but it's all part of your main repo; no submodules.
 
 Example use cases:
 
@@ -29,7 +29,7 @@ TODO: usage examples that demonstrate how this tool solves those problems.
     - [x] Quoting unusual characters in the config file uses shell syntax using Python's `shlex` module.
 - [x] File name based include/exclude filtering of external content. The syntax is very similar to the gitignore syntax.
 - [x] Vendoring a subdirectory instead of the entire project's directory structure. E.g. with `--dir=vendor/foo --subdir=src`, the external file `src/bar.txt` in your project becomes as `vendor/foo/bar.txt` with no `src` component.
-- [x] Support for also vendoring the submodules of a vendored project while following the proper commit pointers. (They can be omitted with a filename based exclude rule.)
+- [x] Support for also vendoring the submodules of a vendored project while following the proper commit pointers. (They can be omitted with a file name based exclude rule.)
 - [x] Proper documentation for command line interface and config file.
     - [x] Cleanup argparse CLI so that more options are accepted as positional arguments. E.g. `git-vendor mv --dir a/b/c --new-dir a/z/c` should instead be expressible as `git-vendor mv a/{b,z}/c` (in Bash).
 - [ ] During `git-vendor add`, make `--follow-branch <branch>` the default, where `<branch>` is determined via `git remote show`.
@@ -244,7 +244,7 @@ The next car in the complaining train is that `git submodule update` does not up
 
 I could go on complaining about how replacing a submodule with a regular directory breaks everyone's `git pull`, or how the hidden content in the `.git/modules` directory will cause subtle errors if you ever try to replace a submodule with another one at the same path, but that's starting to get into niche territory (all of which I have actually run into in a professional environment). The crux of the problem is that git submodules are also functioning git repositories, which introduces tons of complexity unsuitable for a vendoring usecase.
 
-If you were to try to solve the filtering and patching use case with a submodule, it would probably come in the form of a commit that applies the changes you want. This probably means forking the dependency under your own user/organization/server and pushing one or more commits. When new changes are made to the third-party content, you would probably try doing a merge between their changes and your patch. However, if your real intention is to *ignore* the content of the `examples/` directory, for example, then a commit that deletes all the content there is the wrong tool for the job. That commit would cause a merge conflict when anything in the content is changed, and would completely miss new additions to the directory. This is an example of how file name based filtering better expresses intent, and is more suitable to the vendoring use case.
+If you were to try to solve the filtering use case with a submodule, it would probably come in the form of a commit that applies the changes you want. This probably means forking the dependency under your own user/organization/server and pushing one or more commits. When new changes are made to the third-party content, you would probably try doing a merge between their changes and your patch. However, if your real intention is to *ignore* the content of the `examples/` directory, for example, then a commit that deletes all the content there is the wrong tool for the job. That commit would cause a merge conflict when anything in the content is changed, and would completely miss new additions to the directory. This is an example of how file name based filtering better expresses intent, and is more suitable to the vendoring use case.
 
 #### `git subtree`
 
