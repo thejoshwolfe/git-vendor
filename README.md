@@ -11,6 +11,27 @@ Example use cases:
 
 TODO: usage examples that demonstrate how this tool solves those problems.
 
+<!--GEN_TOC_START-->
+* [Status](#status)
+* [Reference](#reference)
+    * [Config file](#config-file)
+    * [Common options](#common-options)
+        * [`dir`](#dir)
+        * [`url`](#url)
+        * [`follow-branch`](#follow-branch)
+        * [`pin-to-tag`](#pin-to-tag)
+        * [`pin-to-commit`](#pin-to-commit)
+        * [`subdir`](#subdir)
+        * [`include`](#include)
+        * [`exclude`](#exclude)
+    * [Command line](#command-line)
+* [git-vendor vs other options](#git-vendor-vs-other-options)
+    * [brettlangdon/git-vendor](#brettlangdongit-vendor)
+    * [`git submoudle`](#git-submoudle)
+    * [`git subtree`](#git-subtree)
+    * [ingydotnet/git-subrepo](#ingydotnetgit-subrepo)
+<!--GEN_TOC_END-->
+
 ## Status
 
 - [x] Basic initialization and download for a one-time import.
@@ -108,7 +129,7 @@ On the command line, this option is is resolved relative to the cwd
 rather than the repo root and is canonicalized internally.
 Several commands take this option as either a position argument or a keyword arugment.
 
-<!--GEN_START-->
+<!--GEN_DOCS_START-->
 #### `url`
 
 URL of the external git repo. See `git help clone` for acceptable URL formats.
@@ -197,7 +218,7 @@ i.e. anything excluded by this option can never be un-excluded by `include` or a
 
 Note that if the external repo includes git submodules, those will be recursively fetched and included
 unless they are excluded by this option (or not included by `include`).
-<!--GEN_END-->
+<!--GEN_DOCS_END-->
 
 ### Command line
 
