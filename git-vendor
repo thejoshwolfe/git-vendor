@@ -287,9 +287,13 @@ def cli():
     else: assert False
 
 def do_add(url, follow_branch, pin_to_tag, pin_to_commit, dir, subdir, include, exclude, allow_dir_exists):
+    canonical_dir = actual_dir_to_path_in_repo(dir)
+    assert not any(canonical_dir == item.dir for item in read_config_file()), "dir is already a vendored dir: " + shlex.quote(canonical_dir)
+
     new_config_item = ConfigItem()
 
-    new_config_item.dir = validate_dir(dir, "--dir", allow_dir_exists)
+    new_config_item.dir = validate_dir(canonical_dir, "--dir", allow_dir_exists)
+
     validate_url(url)
     new_config_item.url = url
     if subdir != None:
@@ -311,8 +315,6 @@ def do_add(url, follow_branch, pin_to_tag, pin_to_commit, dir, subdir, include, 
     if exclude:
         new_config_item.exclude = exclude
 
-    # Before trying to add anything, validate the existing config file, if any.
-    read_config_file()
     download_the_thing(new_config_item, NEW_SECTION)
 
 def do_set(url, follow_branch, pin_to_tag, pin_to_commit, dir, subdir, include, exclude):
@@ -408,7 +410,11 @@ def do_remove(actual_dir):
 
 def do_rename(actual_dir, actual_new_dir, allow_dir_exists):
     config_item, section_index = find_config_item_by_dir(actual_dir)
-    config_item.dir = validate_dir(actual_new_dir, "--new-dir", allow_dir_exists)
+
+    canonical_dir = actual_dir_to_path_in_repo(actual_new_dir)
+    assert config_item.dir != canonical_dir, "cannot rename something to itself: " + shlex.quote(canonical_dir)
+    assert not any(canonical_dir == item.dir for item in read_config_file()), "dir is already a vendored dir: " + shlex.quote(canonical_dir)
+    config_item.dir = validate_dir(canonical_dir, "--new-dir", allow_dir_exists)
     edit_config_file(config_item, section_index)
 
     # Trailing slashes on this parameter ruin everything.
@@ -497,8 +503,7 @@ def do_diff_patch(actual_dir):
 
 
 def find_config_item_by_dir(actual_dir):
-    repo_root = get_repo_root()
-    path_in_repo = os.path.normpath(os.path.relpath(actual_dir, repo_root)).replace(os.path.sep, "/")
+    path_in_repo = actual_dir_to_path_in_repo(actual_dir)
     for section_index, config_item in enumerate(read_config_file()):
         if config_item.dir == path_in_repo:
             return (config_item, section_index)
@@ -1697,14 +1702,17 @@ def validate_field(field_name, value, error_fn):
     except ValidationError as e:
         error_fn(str(e))
 
-def validate_dir(dir, param_name, allow_dir_exists):
+def actual_dir_to_path_in_repo(actual_dir):
     repo_root = get_repo_root()
-    assert is_path_within(repo_root, dir), param_name + " is outside the git repo"
-    path_in_repo = os.path.relpath(dir, repo_root)
+    assert is_path_within(repo_root, actual_dir), param_name + " is outside the git repo"
+    return os.path.relpath(actual_dir, repo_root).replace(os.path.sep, "/")
+
+def validate_dir(path_in_repo, param_name, allow_dir_exists):
     assert path_in_repo != ".", param_name + " must not be the entire repo"
     if not allow_dir_exists:
-        assert not os.path.exists(dir), param_name + " already exists. try giving --allow-dir-exists."
-    return path_in_repo.replace(os.path.sep, "/")
+        actual_dir = os.path.join(get_repo_root(), path_in_repo)
+        assert not os.path.exists(actual_dir), param_name + " already exists. try giving --allow-dir-exists."
+    return path_in_repo
 
 def validate_subdir(subdir):
     if os.path.isabs(subdir) or os.path.commonpath([subdir, ".."]) == "..":

@@ -42,9 +42,9 @@ TODO: usage examples that demonstrate how this tool solves those problems.
 - [x] Configuration information stored in a file `.git-vendor-config` in your repo. Automatically gets edited as appropriate while maintaining formatting and comments.
     - [x] Convenient command to support removing vendored content.
     - [x] Convenient command to support renaming/moving local vendored content.
-    - [ ] TODO: Make sure the rename doesn't cause a primary key collision with --allow-dir-exists.
     - [ ] TODO: Validate `dir` options from config file are canonical and unique.
     - [ ] TODO: Don't let backslashes in paths on Windows.
+    - [ ] TODO: Make the warning about path urls only happen on add/mv, not on reading the config file.
     - [x] Convenient command to support editing the config file.
     - [x] Validation for a manually edited config file.
     - [x] Quoting unusual characters in the config file uses shell syntax using Python's `shlex` module.
@@ -79,7 +79,7 @@ It is used internally by `git-vendor`:
 
 * `commit`
 
-There are several more options that only appear in the command line interface, documented below.
+There are several more options that only appear in the command line interface.
 
 ### Config file
 
