@@ -295,7 +295,8 @@ def cli():
 
 def do_add(url, follow_branch, pin_to_tag, pin_to_commit, dir, subdir, include, exclude, allow_dir_exists):
     canonical_dir = actual_dir_to_path_in_repo(dir, "--dir")
-    assert not any(canonical_dir == item.dir for item in read_config_file()), "dir is already a vendored dir: " + shlex.quote(canonical_dir)
+    existing_items = read_config_file()
+    assert not any(canonical_dir == item.dir for item in existing_items), "dir is already a vendored dir: " + shlex.quote(canonical_dir)
 
     new_config_item = ConfigItem()
 
@@ -337,7 +338,7 @@ def do_add(url, follow_branch, pin_to_tag, pin_to_commit, dir, subdir, include, 
     if exclude:
         new_config_item.exclude = exclude
 
-    download_the_thing(new_config_item, NEW_SECTION)
+    download_the_thing(new_config_item, len(existing_items))
 
 def do_set(url, follow_branch, pin_to_tag, pin_to_commit, dir, subdir, include, exclude):
     config_item, section_index = find_config_item_by_dir(dir)
@@ -379,15 +380,19 @@ def do_set(url, follow_branch, pin_to_tag, pin_to_commit, dir, subdir, include, 
             config_item.exclude = exclude
 
     download_the_thing(config_item, section_index)
+    cleanup_refs([section_index], False)
 
 def do_update(maybe_dir):
     if maybe_dir != None:
         config_item, section_index = find_config_item_by_dir(maybe_dir)
         the_things = [(section_index, config_item)]
+        visited_all_sections = False
     else:
-        the_things = enumerate(read_config_file())
+        the_things = list(enumerate(read_config_file()))
+        visited_all_sections = True
     for section_index, config_item in the_things:
         download_the_thing(config_item, section_index)
+    cleanup_refs([section_index for (section_index, _) in the_things], visited_all_sections)
 
 def do_list(maybe_dir):
     if maybe_dir != None:
@@ -485,10 +490,11 @@ def do_save_patch(actual_dir):
         mode="single_line")
 
     # Compute the post-filter pre-patch tree.
-    fetch_and_set_commit(config_item, refresh_ref=False)
+    fetch_and_set_commit(config_item, section_index, refresh_ref=False)
     old_tree_object_name = filter_tree(
         get_git_commit_tree_object_name(config_item.commit), config_item.subdir,
-        config_item.include, config_item.exclude)
+        config_item.include, config_item.exclude,
+        section_index)
 
     new_tree_patch = "{}:{}:{}".format(config_item.commit, old_tree_object_name, new_tree_object_name)
     if config_item.tree_patch == new_tree_patch:
@@ -511,12 +517,12 @@ def do_save_patch(actual_dir):
         print("Use \"git commit\" to proceed with the commit.")
 
 def do_diff_patch(actual_dir):
-    config_item, _ = find_config_item_by_dir(actual_dir)
+    config_item, section_index = find_config_item_by_dir(actual_dir)
     if config_item.tree_patch == None:
         return
     old_commit, old_tree_object_name, new_tree_object_name = config_item.tree_patch.split(":")
-    if not git_object_exists(old_tree_object_name):
-        git_fetch_to_cache(config_item.url, old_commit)
+    if not is_git_object_resolvable_as_tree(old_tree_object_name):
+        git_fetch_to_cache(config_item.url, old_commit, section_index)
     cmd = ["git", "diff", old_tree_object_name, new_tree_object_name]
     if CliOptions.dry_run:
         print(" ".join(shlex.quote(x) for x in cmd))
@@ -534,7 +540,7 @@ def find_config_item_by_dir(actual_dir):
         "tip: try \"git-vendor list\"",
     ]))
 
-def fetch_and_set_commit(config_item, *, refresh_ref):
+def fetch_and_set_commit(config_item, section_index, *, refresh_ref):
     """ fetches the third-party data if necessary, and sets config_item.commit to the resolved object name """
     resolve_ref = None
     if config_item.follow_branch != None:
@@ -569,26 +575,27 @@ def fetch_and_set_commit(config_item, *, refresh_ref):
             mode="newline_terminated_lines")
         if len(remote_lines) != 1:
             # Ref is deleted? Let's let `git fetch` report the error.
-            git_fetch_to_cache(config_item.url, resolve_ref)
+            git_fetch_to_cache(config_item.url, resolve_ref, section_index)
             assert False, "Expected ls-remote and fetch to agree on the non-existence of ref: " + resolve_ref
         # e.g. "615624c2c2cfbed7e30a158493b704231b14ff8e\trefs/heads/main"
         config_item.commit = remote_lines[0].split("\t", 1)[0]
         # We might save this edit depending on later logic.
 
     # Verify that we actually have the commit cached.
-    if git_object_exists(config_item.commit + "^{tree}"):
+    if is_git_object_resolvable_as_tree(config_item.commit):
         return
 
     # Recache the commit.
-    git_fetch_to_cache(config_item.url, config_item.commit)
+    git_fetch_to_cache(config_item.url, config_item.commit, section_index)
 
 def download_the_thing(config_item, section_index):
-    fetch_and_set_commit(config_item, refresh_ref=True)
+    fetch_and_set_commit(config_item, section_index, refresh_ref=True)
 
     # Filter vendored tree and inline submodules.
     vendored_tree_object_name = filter_tree(
         get_git_commit_tree_object_name(config_item.commit), config_item.subdir,
-        config_item.include, config_item.exclude)
+        config_item.include, config_item.exclude,
+        section_index)
     # Apply patches.
     if config_item.tree_patch != None:
         old_commit, old_tree_object_name, new_tree_object_name = config_item.tree_patch.split(":")
@@ -597,15 +604,16 @@ def download_the_thing(config_item, section_index):
         else:
             # We need to merge the patches with the new changes.
             # Make sure we have the old tree fetched and cached. It may have been gc'ed.
-            if not git_object_exists(old_tree_object_name + "^{tree}"):
+            if not is_git_object_resolvable_as_tree(old_tree_object_name):
                 # The old tree is based on the commit.
-                if not git_object_exists(old_commit + "^{tree}"):
+                if not is_git_object_resolvable_as_tree(old_commit):
                     # Start by fetching the commit.
-                    git_fetch_to_cache(config_item.url, old_commit)
+                    git_fetch_to_cache(config_item.url, old_commit, section_index)
                 # We need to run our filters on the old commit to recreate the old tree.
                 recreated_old_tree_object_name = filter_tree(
                     get_git_commit_tree_object_name(old_commit), config_item.subdir,
-                    config_item.include, config_item.exclude)
+                    config_item.include, config_item.exclude,
+                    section_index)
                 if recreated_old_tree_object_name != old_tree_object_name:
                     sys.exit("\n".join("ERROR: " + line for line in [
                         "Something changed in the config file, and `git gc` has deleted an object critical for patching.",
@@ -782,7 +790,6 @@ def read_config_file():
 
     return sections
 
-NEW_SECTION = -1
 def edit_config_file(new_config_item, section_index):
     repo_root = get_repo_root()
     config_file_path = os.path.join(repo_root, ".git-vendor-config")
@@ -790,8 +797,7 @@ def edit_config_file(new_config_item, section_index):
         with open(config_file_path) as f:
             lines = list(f)
     except FileNotFoundError:
-        if section_index != NEW_SECTION:
-            raise
+        if section_index != 0: raise
         lines = []
     if len(lines) == 0:
         lines = [
@@ -949,10 +955,11 @@ def edit_config_file(new_config_item, section_index):
             property_new_line_indexes[field_name] = len(new_lines)
         new_lines.append(line)
 
-    flush_section()
+    if theres_at_least_one_section:
+        flush_section()
     total_sections = current_section_index
 
-    if section_index == NEW_SECTION:
+    if section_index == total_sections:
         # Create a new section.
         if theres_at_least_one_section:
             # Insert a separator.
@@ -993,15 +1000,12 @@ def edit_config_file(new_config_item, section_index):
                 print("")
             else:
                 # use `git diff <blob> <blob>` to show the changes
-                # use `git ls-tree` to get the 'from' blob object name.
-                # use `git hash-object` to get the 'to' blob object name.
                 git("diff",
-                    git("ls-tree",
-                        "HEAD",
-                        "--",
+                    git("hash-object",
+                        "-w",
                         os.path.relpath(config_file_path),
                         mode="single_line",
-                    ).split("\t")[0].rsplit(" ", 1)[1],
+                    ),
                     git("hash-object",
                         "-w", "--stdin",
                         input="".join(
@@ -1033,15 +1037,7 @@ def edit_config_file(new_config_item, section_index):
                     os.path.relpath(config_file_path),
                     mode="mutating")
 
-    if section_index == NEW_SECTION:
-        # Return the new section_index.
-        if theres_at_least_one_section:
-            return current_section_index
-        else:
-            return 0
-    else:
-        # You already know your section index.
-        return None
+    # Done
 
 
 def insert_tree_at_path(base_tree_object_name, new_tree_object_name, new_tree_subdir_path):
@@ -1087,7 +1083,7 @@ def insert_tree_at_path(base_tree_object_name, new_tree_object_name, new_tree_su
             mode="single_line")
     return recurse(base_tree_object_name, new_tree_subdir_path)
 
-def filter_tree(tree_object_name, start_at_subdir, include, exclude):
+def filter_tree(tree_object_name, start_at_subdir, include, exclude, section_index):
     include_so_far = MAYBE
     if len(include) == 0:
         include_so_far = True
@@ -1176,20 +1172,13 @@ def filter_tree(tree_object_name, start_at_subdir, include, exclude):
                 # Inline submoudle.
                 try:
                     # Resolve commit to a tree.
-                    object_name = git("rev-parse",
-                        "--verify",
-                        object_name + "^{tree}",
-                        suppress_stderr=True,
-                        mode="single_line")
+                    object_name = get_git_commit_tree_object_name(object_name)
                 except subprocess.CalledProcessError:
                     # Need to fetch.
                     path_in_submodule = full_path.split("/", submodule_root_tree_depth)[-1]
-                    git_fetch_to_cache(get_submodule_path_to_url_fn()[path_in_submodule], object_name)
+                    git_fetch_to_cache(get_submodule_path_to_url_fn()[path_in_submodule], object_name, section_index)
                     # Try again to resolve the commit to a tree.
-                    object_name = git("rev-parse",
-                        "--verify",
-                        object_name + "^{tree}",
-                        mode="single_line")
+                    object_name = get_git_commit_tree_object_name(object_name)
                 recurse(object_name, full_path, len(full_path.split("/")), include_this_item, make_get_submodule_path_to_url_fn(object_name))
                 continue
             # Keep this blob.
@@ -1516,33 +1505,79 @@ def compile_filter(pattern, error_hint, *, return_maybe_on_prefix_match=False):
         return True
     return filter_fn
 
+# At the end of an operation, we want to delete any unused refs/vendor/* refs we may have created in the past.
+# This set holds a set of commits we just used during this run of the program, and so these should be kept pinned by named refs.
+_git_commits_to_keep = set()
+
 def get_git_commit_tree_object_name(commit_object_name):
+    _git_commits_to_keep.add(commit_object_name)
     return git("rev-parse",
         "--verify",
         commit_object_name + "^{tree}",
         mode="single_line",
     )
 
-def git_object_exists(expression):
+def is_git_object_resolvable_as_tree(object_name):
+    # This might actually be a tree instead of a commit, but it's harmless to add it to this set anyway.
+    _git_commits_to_keep.add(object_name)
     try:
         git("rev-parse",
             "--verify",
-            expression,
+            object_name + "^{tree}",
             suppress_stderr=True,
             mode="single_line")
     except subprocess.CalledProcessError:
         return False
     return True
 
-def git_fetch_to_cache(url, ref):
-    # This name can be anything.
-    external_ref_local_name = "refs/vendor/fetch_head"
+def git_fetch_to_cache(url, ref, section_index):
+    # This name can be anything, but ideally we don't get collisions.
+    external_ref_local_name = "refs/vendor/{}/ref-{}".format(section_index, hex(0xffffffffffffffff & hash(url + "\x00" + ref))[2:])
     git("fetch",
         "--no-tags", "--force",
         "--depth", "1",
         url,
         "{}:{}".format(ref, external_ref_local_name),
         mode="inherit_stdout")
+    # Make sure to keep this ref from getting gc'ed at the end of this operation.
+    _git_commits_to_keep.add(git("rev-parse",
+        "--verify",
+        external_ref_local_name,
+        mode="single_line",
+    ))
+
+def cleanup_refs(section_indexes, visited_all_sections):
+    section_indexes = set(section_indexes)
+    instructions = []
+    for line in git("show-ref", mode="newline_terminated_lines"):
+        object_name, ref_name = line.split(" ", maxsplit=1)
+        match = re.match(r'^refs/vendor/(-?\d+)/.*$', ref_name)
+        if match == None: continue
+        section_index = int(match.group(1))
+        if section_index not in section_indexes:
+            if visited_all_sections:
+                # The section index is entirely out of bounds.
+                # This can happen when a 'rm' has been done.
+                instructions.append("delete {}\x00{}\x00".format(ref_name, object_name))
+            else:
+                # This is for a section we didn't visit, so we don't really know whether we can keep it or not.
+                continue
+        else:
+            # We visited this section.
+            if object_name in _git_commits_to_keep:
+                # Keep any vaguely in-bounds references to objects we know we care about.
+                continue
+            else:
+                # We visited this section, but we never encountered the object this ref points to.
+                # We must not need it anymore.
+                instructions.append("delete {}\x00{}\x00".format(ref_name, object_name))
+
+    if len(instructions) > 0:
+        git("update-ref",
+            "--stdin", "-z",
+            input="".join(instructions),
+            mode="mutating", skip_in_dry_run=True)
+
 
 def parse_submodule_path_to_url_from_gitmodules_config_content(content_bytes):
     path_configs = {
@@ -1750,7 +1785,7 @@ def validate_subdir(subdir):
         return None
     return os.path.normpath(subdir).replace(os.path.sep, "/")
 
-def validate_url(url, warn=True):
+def validate_url(url, *, warn):
     # See `git help fetch` section GIT URLS.
     if re.match(r'^[a-z+.-]+://.*', url) != None:
         # Some kind of url. Should be safe to try at least.

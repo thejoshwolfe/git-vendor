@@ -54,7 +54,7 @@ TODO: usage examples that demonstrate how this tool solves those problems.
 - [ ] Unit tests for corner case error handling. (Code coverage?)
     - [ ] Probably should suppress stack traces on all `CalledProcessError`.
     - [ ] Don't show AssertionError stack traces for invalid user input.
-- [ ] Audit local named ref usage and how it relates to objects being orphaned and gc'ed too soon, or perhaps never being gc'ed when they should.
+- [x] Audit local named ref usage and how it relates to objects being orphaned and gc'ed too soon, or perhaps never being gc'ed when they should.
 - [ ] Declare 1.0 stable, and move the remaining unfinished items in this list to GitHub Issues.
 
 ## Reference

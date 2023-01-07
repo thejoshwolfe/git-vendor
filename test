@@ -237,6 +237,42 @@ def multiple_upstreams(test_name):
     git_vendor("ls", "vendor/up2", cwd=down)
 
 @test
+def submodules(test_name):
+    down, up, sub, subsub = init(test_name, "downstream", "upstream", "submodule", "subsubmodule")
+
+    git_submodule("add", sub, "sub", cwd=up)
+    git("commit", "-m", "add submodule", cwd=up)
+
+    git_vendor("add", "vendor/up", "--url", up, cwd=down)
+    git("commit", "-m", "vendor upstream", cwd=down)
+    assert git_rev_parse_verify("HEAD:vendor/up/sub", cwd=down) == git_rev_parse_verify("HEAD^{tree}", cwd=sub)
+
+    # Recursive submodules
+    git_submodule("add", subsub, "subsub", cwd=sub)
+    git("commit", "-m", "add subsubmodule", cwd=sub)
+
+    git_submodule("update", "--remote", cwd=up, suppress_stderr=True)
+    git("commit", "-a", "-m", "bump submodule", cwd=up)
+
+    git_vendor("up", cwd=down)
+    git("commit", "-m", "update vendored content", cwd=down)
+    assert git_rev_parse_verify("HEAD:vendor/up/sub/subsub", cwd=down) == git_rev_parse_verify("HEAD^{tree}", cwd=subsub)
+
+    # At this point we have 3 refs being maintained in refs/vendor/0/*.
+    # (We're not testing for that here, because it's an optimization, not a functional requirement.)
+
+    # Drop all the submodules
+    git("rm", "sub", cwd=up)
+    git("commit", "-m", "remove submodule", cwd=up)
+
+    git_vendor("up", cwd=down)
+    git("commit", "-m", "update vendored content again", cwd=down)
+    assert not os.path.exists(os.path.join(down, "vendor/up/sub"))
+
+    # At this point we're back down to 1 ref being maintained in refs/vendor/0/*.
+    # (We're not testing for that here, because it's an optimization, not a functional requirement.)
+
+@test
 def sha256(test_name):
     down, up = init(test_name, "downstream", "upstream", sha256=True)
     commit_sha1 = git_rev_parse_verify("HEAD", cwd=up)
@@ -343,16 +379,28 @@ def git_clone(origin_dir, repo_name):
 
     return repo_dir
 
+def git_submodule(*cmd, cwd, suppress_stderr=False):
+    git(
+        # Submodules with file system urls are a security hazard,
+        # so give this option to enable it during these tests.
+        "-c", "protocol.file.allow=always",
+        "submodule", "--quiet",
+        *cmd,
+        cwd=cwd, suppress_stderr=suppress_stderr)
+
 def git_rev_parse_verify(arg, *, cwd):
     return git("rev-parse", "--verify", arg, cwd=cwd).rstrip()
 
-def git(*args, cwd):
+def git(*args, cwd, suppress_stderr=False):
     cmd = ["git"]
     cmd.extend(args)
+    kwargs = {}
+    if suppress_stderr:
+        kwargs["stderr"] = subprocess.DEVNULL
     process = subprocess.run(cmd,
         cwd=cwd, env=get_git_env(),
         check=True, stdout=subprocess.PIPE, encoding="utf8",
-    )
+        **kwargs)
     return process.stdout
 
 def git_vendor(*args, cwd):
