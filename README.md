@@ -42,8 +42,6 @@ TODO: usage examples that demonstrate how this tool solves those problems.
 - [x] Configuration information stored in a file `.git-vendor-config` in your repo. Automatically gets edited as appropriate while maintaining formatting and comments.
     - [x] Convenient command to support removing vendored content.
     - [x] Convenient command to support renaming/moving local vendored content.
-    - [ ] TODO: Validate `dir` options from config file are canonical and unique.
-    - [ ] TODO: Don't let backslashes in paths on Windows.
     - [x] Convenient command to support editing the config file.
     - [x] Validation for a manually edited config file.
     - [x] Quoting unusual characters in the config file uses shell syntax using Python's `shlex` module.
@@ -55,6 +53,7 @@ TODO: usage examples that demonstrate how this tool solves those problems.
 - [ ] During `git-vendor add`, make `--follow-branch <branch>` the default, where `<branch>` is determined via `git remote show`.
 - [ ] Unit tests for corner case error handling. (Code coverage?)
     - [ ] Probably should suppress stack traces on all `CalledProcessError`.
+    - [ ] Don't show AssertionError stack traces for invalid user input.
 - [ ] Audit local named ref usage and how it relates to objects being orphaned and gc'ed too soon, or perhaps never being gc'ed when they should.
 - [ ] Declare 1.0 stable, and move the remaining unfinished items in this list to GitHub Issues.
 

@@ -289,7 +289,7 @@ def cli():
     else: assert False
 
 def do_add(url, follow_branch, pin_to_tag, pin_to_commit, dir, subdir, include, exclude, allow_dir_exists):
-    canonical_dir = actual_dir_to_path_in_repo(dir)
+    canonical_dir = actual_dir_to_path_in_repo(dir, "--dir")
     assert not any(canonical_dir == item.dir for item in read_config_file()), "dir is already a vendored dir: " + shlex.quote(canonical_dir)
 
     new_config_item = ConfigItem()
@@ -413,7 +413,7 @@ def do_remove(actual_dir):
 def do_rename(actual_dir, actual_new_dir, allow_dir_exists):
     config_item, section_index = find_config_item_by_dir(actual_dir)
 
-    canonical_dir = actual_dir_to_path_in_repo(actual_new_dir)
+    canonical_dir = actual_dir_to_path_in_repo(actual_new_dir, "--new-dir")
     assert config_item.dir != canonical_dir, "cannot rename something to itself: " + shlex.quote(canonical_dir)
     assert not any(canonical_dir == item.dir for item in read_config_file()), "dir is already a vendored dir: " + shlex.quote(canonical_dir)
     config_item.dir = validate_dir(canonical_dir, "--new-dir", allow_dir_exists)
@@ -505,7 +505,7 @@ def do_diff_patch(actual_dir):
 
 
 def find_config_item_by_dir(actual_dir):
-    path_in_repo = actual_dir_to_path_in_repo(actual_dir)
+    path_in_repo = actual_dir_to_path_in_repo(actual_dir, "--dir")
     for section_index, config_item in enumerate(read_config_file()):
         if config_item.dir == path_in_repo:
             return (config_item, section_index)
@@ -688,6 +688,8 @@ def read_config_file():
     if len(lines) == 0:
         return []
 
+    primary_keys = set()
+
     sections = []
     current_config_item = ConfigItem()
     current_config_item_has_any_properties = False
@@ -743,6 +745,10 @@ def read_config_file():
             line_error(line_index, "value with spaces must be quoted: " + shlex.quote(value))
 
         validate_field(field_name, value, lambda msg: line_error(line_index, msg))
+        if field_name == "dir":
+            if value in primary_keys:
+                line_error(line_index, "multiple sections with the same dir")
+            primary_keys.add(value)
 
         if current_config_item.__dict__[field_name] == None:
             current_config_item.__dict__[field_name] = value
@@ -1704,13 +1710,14 @@ def validate_field(field_name, value, error_fn):
     except ValidationError as e:
         error_fn(str(e))
 
-def actual_dir_to_path_in_repo(actual_dir):
+def actual_dir_to_path_in_repo(actual_dir, param_name):
     repo_root = get_repo_root()
     assert is_path_within(repo_root, actual_dir), param_name + " is outside the git repo"
     return os.path.relpath(actual_dir, repo_root).replace(os.path.sep, "/")
 
 def validate_dir(path_in_repo, param_name, allow_dir_exists):
-    assert path_in_repo != ".", param_name + " must not be the entire repo"
+    assert os.path.normpath(path_in_repo).replace(os.path.sep, "/") == path_in_repo, param_name + " must be normalized: " + shlex.quote(path_in_repo)
+    assert not (path_in_repo in (".", "..") or path_in_repo.startswith("../") or path_in_repo.startswith("/")), param_name + " must be a subdir within the repo: " + shlex.quote(path_in_repo)
     if not allow_dir_exists:
         actual_dir = os.path.join(get_repo_root(), path_in_repo)
         assert not os.path.exists(actual_dir), param_name + " already exists. try giving --allow-dir-exists."
