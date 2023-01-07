@@ -77,8 +77,8 @@ def cli():
             "but git-vendor does not allow local path URLs that are relative paths;",
             "use absolute paths instead (see also issue {} ).".format(issue(6)),
         ]))
-    def add_follow_or_pin(parser, required):
-        follow_group = parser.add_mutually_exclusive_group(required=required)
+    def add_follow_or_pin(parser):
+        follow_group = parser.add_mutually_exclusive_group()
         follow_group.add_argument("--follow-branch", "--branch", metavar="BRANCH", help="\n".join([
             "A branch name identifies the commit of the external repo to use.",
             "This method of identifying a commit communicates with the remote server",
@@ -87,6 +87,12 @@ def cli():
             "is prepended automatically (this is how branches are named in git.).",
             "If the given branch begins with `refs/`, then it will be used as-is,",
             "regardless of whether it really refers to a branch (aka head).",
+            " ",
+            "This mode is the default during `git-vendor add` if none of",
+            "`--follow-branch`, `--pin-to-tag`, or `--pin-to-commit` are specified.",
+            "The branch to follow is determined by getting the 'HEAD' branch name from the remote.",
+            "This is typically 'main'.",
+            "(It is determined by `git ls-remote --symref <url> HEAD`.)",
         ]))
         follow_group.add_argument("--pin-to-tag", "--tag", metavar="TAG", help="\n".join([
             "A tag name identifies the commit of the external repo to use.",
@@ -171,7 +177,7 @@ def cli():
     add_dir_as_arg_or_kwarg(subparser, to_be="will be")
     add_subdir(subparser)
     add_url(subparser, True)
-    add_follow_or_pin(subparser, True)
+    add_follow_or_pin(subparser)
     add_include_exclude(subparser)
     add_allow_dir_exists(subparser, "dir")
 
@@ -185,7 +191,7 @@ def cli():
     add_dir_as_arg_or_kwarg(subparser)
     add_subdir(subparser)
     add_url(subparser, False)
-    add_follow_or_pin(subparser, False)
+    add_follow_or_pin(subparser)
     add_include_exclude(subparser)
 
     for name, aliases, help_content in [
@@ -265,7 +271,6 @@ def cli():
     # Handle command
     if args.command == "add":
         assert args.url and args.dir
-        assert args.follow_branch or args.pin_to_tag or args.pin_to_commit
         do_add(args.url, args.follow_branch, args.pin_to_tag, args.pin_to_commit, args.dir, args.subdir, args.include, args.exclude, args.allow_dir_exists)
     elif args.command == "set":
         assert args.dir
@@ -310,7 +315,22 @@ def do_add(url, follow_branch, pin_to_tag, pin_to_commit, dir, subdir, include, 
     elif pin_to_commit != None:
         validate_object_name("--pin-to-commit", pin_to_commit)
         new_config_item.pin_to_commit = pin_to_commit
-    else: assert False
+    else:
+        # Default is --follow-branch <head-branch>
+        for line in git("ls-remote", "--symref", url, "HEAD", mode="newline_terminated_lines"):
+            try:
+                value, name = line.split("\t", maxsplit=1)
+            except ValueError:
+                continue
+            if not (name == "HEAD" and value.startswith("ref: ")): continue
+            ref_name = value[len("ref: "):]
+            if ref_name.startswith("refs/heads/"):
+                # It looks nicer in the config to omit this prefix.
+                ref_name = ref_name[len("refs/heads/"):]
+            new_config_item.follow_branch = ref_name
+            break
+        else:
+            assert False, "no --follow-branch, --pin-to-tag, or --pin-to-commit given, and remote does not have a HEAD branch: " + shlex.quote(url)
 
     if include:
         new_config_item.include = include

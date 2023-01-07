@@ -38,6 +38,7 @@ TODO: usage examples that demonstrate how this tool solves those problems.
 - [x] Following a branch with `--follow-branch`, and checking for and incorporating changes since the last download.
     - [x] Pinning content to a specific tag with `--pin-to-tag`. In this mode, the third-party server is assumed to never update the ref, and is not queried in the typical case.
     - [x] Pinning content to a specific commit with `--pin-to-commit`.
+    - [x] The default is to follow the branch with the name determined via `git ls-remote --symref <url> HEAD`.
     - [x] Rudimentary support for repos using sha256 instead of sha1.
 - [x] Configuration information stored in a file `.git-vendor-config` in your repo. Automatically gets edited as appropriate while maintaining formatting and comments.
     - [x] Convenient command to support removing vendored content.
@@ -50,7 +51,6 @@ TODO: usage examples that demonstrate how this tool solves those problems.
 - [x] Support for also vendoring the submodules of a vendored project while following the proper commit pointers. (They can be omitted with a file name based exclude rule.)
 - [x] Proper documentation for command line interface and config file.
     - [x] Cleanup argparse CLI so that more options are accepted as positional arguments. E.g. `git-vendor mv --dir a/b/c --new-dir a/z/c` should instead be expressible as `git-vendor mv a/{b,z}/c` (in Bash).
-- [ ] During `git-vendor add`, make `--follow-branch <branch>` the default, where `<branch>` is determined via `git remote show`.
 - [ ] Unit tests for corner case error handling. (Code coverage?)
     - [ ] Probably should suppress stack traces on all `CalledProcessError`.
     - [ ] Don't show AssertionError stack traces for invalid user input.
@@ -144,6 +144,12 @@ If the branch specified does not begin with `refs/`, then a prefix of `refs/head
 is prepended automatically (this is how branches are named in git.).
 If the given branch begins with `refs/`, then it will be used as-is,
 regardless of whether it really refers to a branch (aka head).
+
+This mode is the default during `git-vendor add` if none of
+`--follow-branch`, `--pin-to-tag`, or `--pin-to-commit` are specified.
+The branch to follow is determined by getting the 'HEAD' branch name from the remote.
+This is typically 'main'.
+(It is determined by `git ls-remote --symref <url> HEAD`.)
 
 #### `pin-to-tag`
 
