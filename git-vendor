@@ -189,6 +189,8 @@ def cli():
     add_include_exclude(subparser)
 
     for name, aliases, help_content in [
+        ("list", ["ls"],
+            "List the vendored dirs and note how they are defined."),
         ("update", ["up"],
             "Download any necessary updates to the vendored content, and 'git add' the changes to the vendored dirs."),
         ("status", ["st"],
@@ -255,7 +257,7 @@ def cli():
     if os.environ.get("GIT_VENDOR_SUPER_VERBOSE", ""):
         CliOptions.verbose = True
         CliOptions.super_verbose = True
-    if args.command == "status":
+    if args.command in ("st", "status"):
         # 'status' is an alias for 'update --dry-run'
         args.command = "update"
         CliOptions.dry_run = True
@@ -268,7 +270,7 @@ def cli():
     elif args.command == "set":
         assert args.dir
         do_set(args.url, args.follow_branch, args.pin_to_tag, args.pin_to_commit, args.dir, args.subdir, args.include, args.exclude)
-    elif args.command == "update": # and "status"
+    elif args.command in ("up", "update"): # and "status"
         do_update(args.dir)
     elif args.command in ("ls", "list"):
         do_list(args.dir)
@@ -294,7 +296,7 @@ def do_add(url, follow_branch, pin_to_tag, pin_to_commit, dir, subdir, include, 
 
     new_config_item.dir = validate_dir(canonical_dir, "--dir", allow_dir_exists)
 
-    validate_url(url)
+    validate_url(url, warn=True)
     new_config_item.url = url
     if subdir != None:
         new_config_item.subdir = validate_subdir(subdir)
@@ -321,7 +323,7 @@ def do_set(url, follow_branch, pin_to_tag, pin_to_commit, dir, subdir, include, 
     config_item, section_index = find_config_item_by_dir(dir)
 
     if url != None:
-        validate_url(url)
+        validate_url(url, warn=True)
         config_item.url = url
     if subdir != None:
         if subdir != "":
@@ -1681,7 +1683,7 @@ def validate_field(field_name, value, error_fn):
         if field_name == "dir":
             validate_dir(value, "--dir", True)
         elif field_name == "url":
-            validate_url(value)
+            validate_url(value, warn=False)
         elif field_name == "subdir":
             validate_subdir(value)
         elif field_name == "follow_branch":
@@ -1721,7 +1723,7 @@ def validate_subdir(subdir):
         return None
     return os.path.normpath(subdir).replace(os.path.sep, "/")
 
-def validate_url(url):
+def validate_url(url, warn=True):
     # See `git help fetch` section GIT URLS.
     if re.match(r'^[a-z+.-]+://.*', url) != None:
         # Some kind of url. Should be safe to try at least.
@@ -1733,8 +1735,9 @@ def validate_url(url):
     if os.path.isabs(url):
         # Absolute paths work as git repo urls.
         if os.path.exists(url):
-            warning("Absolute path urls are not portable! (But you probably already knew that.)",
-                "--url={}".format(url))
+            if warn:
+                warning("Absolute path urls are not portable! (But you probably already knew that.)",
+                    "--url={}".format(url))
             return
     else:
         # Relative paths are accepted in some git commands, but they're usually canonicalized to be absolute.

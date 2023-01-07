@@ -216,6 +216,30 @@ def edit_config_through_cli(test_name):
     assert git_rev_parse_verify("HEAD^{tree}", cwd=down) == non_vendoring_entire_tree
 
 @test
+def multiple_upstreams(test_name):
+    down, up1, up2 = init(test_name, "downstream", "upstream1", "upstream2")
+    git_vendor("add",
+        "--dir", "vendor/up1",
+        "--url", up1,
+        "--follow-branch", "main",
+        cwd=down)
+    git_vendor("add",
+        "--dir", "vendor/up2",
+        "--url", up2,
+        "--follow-branch", "main",
+        cwd=down)
+    git("commit",
+        "-m", "vendor upstreams",
+        cwd=down)
+    assert git_rev_parse_verify("HEAD:vendor/up1", cwd=down) == git_rev_parse_verify("HEAD^{tree}", cwd=up1)
+    assert git_rev_parse_verify("HEAD:vendor/up2", cwd=down) == git_rev_parse_verify("HEAD^{tree}", cwd=up2)
+
+    # Make sure these don't crash.
+    git_vendor("ls", cwd=down)
+    git_vendor("ls", "vendor/up1", cwd=down)
+    git_vendor("ls", "vendor/up2", cwd=down)
+
+@test
 def sha256(test_name):
     down, up = init(test_name, "downstream", "upstream", sha256=True)
     commit_sha1 = git_rev_parse_verify("HEAD", cwd=up)
@@ -275,7 +299,7 @@ def clean_preserves_ignored(test_name):
     assert os.path.isfile(os.path.join(down, "vendor/up/trash.ignored"))
 
 
-def init(test_name, downstream_repo_dir_name, *upstream_repo_names, sha256=False):
+def init(test_name, *repo_names, sha256=False):
     test_dir = os.path.join(tests_root, test_name)
     try:
         shutil.rmtree(test_dir)
@@ -284,8 +308,8 @@ def init(test_name, downstream_repo_dir_name, *upstream_repo_names, sha256=False
     os.makedirs(test_dir)
 
     repo_dirs = []
-    for dir_name in (downstream_repo_dir_name,) + upstream_repo_names:
-        repo_dir = os.path.join(test_dir, dir_name)
+    for repo_name in repo_names:
+        repo_dir = os.path.join(test_dir, repo_name)
         os.makedirs(repo_dir)
         init_args = []
         if sha256:
@@ -296,9 +320,9 @@ def init(test_name, downstream_repo_dir_name, *upstream_repo_names, sha256=False
             cwd=repo_dir)
         git("commit",
             "--allow-empty",
-            "-m", "init repo: " + dir_name,
+            "-m", "init repo: " + repo_name,
             cwd=repo_dir)
-        set_file(repo_dir, dir_name + ".txt")
+        set_file(repo_dir, repo_name + ".txt")
 
         repo_dirs.append(repo_dir)
 

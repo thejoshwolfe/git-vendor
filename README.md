@@ -44,7 +44,6 @@ TODO: usage examples that demonstrate how this tool solves those problems.
     - [x] Convenient command to support renaming/moving local vendored content.
     - [ ] TODO: Validate `dir` options from config file are canonical and unique.
     - [ ] TODO: Don't let backslashes in paths on Windows.
-    - [ ] TODO: Make the warning about path urls only happen on add/mv, not on reading the config file.
     - [x] Convenient command to support editing the config file.
     - [x] Validation for a manually edited config file.
     - [x] Quoting unusual characters in the config file uses shell syntax using Python's `shlex` module.
