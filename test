@@ -293,8 +293,6 @@ def sha256(test_name):
     git("commit", "-m", "pin vendored content", cwd=down)
     assert git_rev_parse_verify("HEAD:vendor/up", cwd=down) == git_rev_parse_verify(commit_sha1 + "^{tree}", cwd=up)
 
-# TODO add new tests here
-
 @test
 def clean_preserves_ignored(test_name):
     down, up = init(test_name, "downstream", "upstream")
@@ -331,6 +329,58 @@ def clean_preserves_ignored(test_name):
     assert not os.path.isdir(os.path.join(down, "vendor/up/a"))
     assert os.path.isfile(os.path.join(down, "vendor/up/trash.ignored"))
 
+@test
+def errors(test_name):
+    # Setup some normal things:
+    down, up1, up2 = init(test_name, "downstream", "upstream1", "upstream2")
+    git_vendor("add",
+        "--dir", "vendor/up1",
+        "--url", up1,
+        cwd=down)
+    git_vendor("add",
+        "--dir", "vendor/up2",
+        "--url", up2,
+        cwd=down)
+    git("commit",
+        "-m", "vendor upstreams",
+        cwd=down)
+
+    expect_subprocess_error("usage:", lambda: git_vendor("asdf", cwd=down))
+    expect_subprocess_error("usage:", lambda: git_vendor("add", "a", "b", cwd=down))
+    expect_subprocess_error("usage:", lambda: git_vendor("mv", "a", "b", "c", cwd=down))
+    expect_subprocess_error("usage:", "required", "--url", lambda: git_vendor("add", "a", cwd=down))
+
+    expect_subprocess_error("not vendored content", "asdf", lambda: git_vendor("ls", "asdf", cwd=down))
+    expect_subprocess_error("not vendored content", "'as df'", lambda: git_vendor("ls", "as df", cwd=down))
+    expect_subprocess_error("not found in external repo", "'as df'", lambda: git_vendor("set", "vendor/up1", "--subdir", "as df", cwd=down))
+
+    expect_subprocess_error("--dir is invalid", lambda: git_vendor("add", "--dir", ".", "--url=https://a.invalid/", cwd=down))
+    expect_subprocess_error("--dir is invalid", lambda: git_vendor("add", "--dir", "..", "--url=https://a.invalid/", cwd=down))
+    expect_subprocess_error("--dir is invalid", lambda: git_vendor("add", "--dir", "/vendor/up3", "--url=https://a.invalid/", cwd=down))
+    expect_subprocess_error("already a vendored dir", lambda: git_vendor("add", "vendor/up2", "--url=https://a.invalid/", cwd=down))
+    expect_subprocess_error("within an already vendored dir", lambda: git_vendor("add", "vendor/up2/subdir", "--url=https://a.invalid/", cwd=down))
+
+    expect_subprocess_error("--new-dir is invalid", lambda: git_vendor("mv", "vendor/up1", ".", cwd=down))
+    expect_subprocess_error("--new-dir is invalid", lambda: git_vendor("mv", "vendor/up1", "..", cwd=down))
+    expect_subprocess_error("--new-dir is invalid", lambda: git_vendor("mv", "vendor/up1", "/vendor/up3", cwd=down))
+    expect_subprocess_error("--subdir is invalid", lambda: git_vendor("set", "vendor/up1", "--subdir", ".", cwd=down))
+    expect_subprocess_error("--subdir is invalid", lambda: git_vendor("set", "vendor/up1", "--subdir", "..", cwd=down))
+    expect_subprocess_error("--subdir must be a relative path", lambda: git_vendor("set", "vendor/up1", "--subdir", "/vendor/up3", cwd=down))
+
+    git_vendor("ls", "../up2", cwd=os.path.join(down, "vendor/up1"))
+    expect_subprocess_error("--new-dir is invalid", lambda: git_vendor("mv", "../up2", "/tmp", cwd=os.path.join(down, "vendor/up1")))
+    expect_subprocess_error("itself", lambda: git_vendor("mv", "../up2", "../../vendor/up2", cwd=os.path.join(down, "vendor/up1")))
+    expect_subprocess_error("within an already vendored dir", lambda: git_vendor("mv", "../up2", "../../vendor/up1/subdir", cwd=os.path.join(down, "vendor/up1")))
+    expect_subprocess_error("would completely contain", lambda: git_vendor("mv", "vendor/up2", "vendor", cwd=down))
+
+    expect_subprocess_error("no content after filters", lambda: git_vendor("set", "vendor/up1", "--include", "asdf", cwd=down))
+    expect_subprocess_error("no content after filters", lambda: git_vendor("set", "vendor/up1", "--exclude", "*.txt", cwd=down))
+    expect_subprocess_error("Invalid pattern", lambda: git_vendor("set", "vendor/up1", "--include", "/", cwd=down))
+    expect_subprocess_error("Invalid pattern", lambda: git_vendor("set", "vendor/up1", "--include", "a//b", cwd=down))
+    expect_subprocess_error("please use", "instead", lambda: git_vendor("set", "vendor/up1", "--include", "**", cwd=down))
+    expect_subprocess_error("please use", "instead", lambda: git_vendor("set", "vendor/up1", "--include", "**/", cwd=down))
+    expect_subprocess_error("cannot contain", lambda: git_vendor("set", "vendor/up1", "--include", "a/./b", cwd=down))
+    expect_subprocess_error("cannot contain", lambda: git_vendor("set", "vendor/up1", "--include", "a/../b", cwd=down))
 
 def init(test_name, *repo_names, sha256=False):
     test_dir = os.path.join(tests_root, test_name)
@@ -403,13 +453,28 @@ def git(*args, cwd, suppress_stderr=False):
         **kwargs)
     return process.stdout
 
+_git_vendor_captured_stderr = None
 def git_vendor(*args, cwd):
+    global _git_vendor_captured_stderr
+    _git_vendor_captured_stderr = None
     cmd = [os.path.abspath("./git-vendor")]
     cmd.extend(args)
-    subprocess.run(cmd,
+    completed_process = subprocess.run(cmd,
         cwd=cwd, env=get_git_env(),
-        check=True, capture_output=True, encoding="utf8",
+        capture_output=True, encoding="utf8",
     )
+    try:
+        completed_process.check_returncode()
+    except subprocess.CalledProcessError:
+        _git_vendor_captured_stderr = completed_process.stderr
+        raise
+
+def get_git_vendor_stderr():
+    global _git_vendor_captured_stderr
+    result = _git_vendor_captured_stderr
+    _git_vendor_captured_stderr = None
+    return result
+
 
 @lru_cache()
 def get_git_env():
@@ -462,5 +527,23 @@ class attribute_patcher:
     def __exit__(self, *args):
         setattr(self.obj, self.attr, self.old_value)
 
+def expect_subprocess_error(*args):
+    error_strs, fn = args[:-1], args[-1]
+    get_git_vendor_stderr()
+    try:
+        fn()
+    except subprocess.CalledProcessError:
+        stderr = get_git_vendor_stderr()
+        assert "Traceback" not in stderr, "subprocess crashed:\n" + stderr
+        for error_str in error_strs:
+            assert error_str in stderr, "Expected {} to be found in stderr:\n{}".format(repr(error_str), stderr)
+        return
+    assert False, "Expected child process to crash"
+
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except subprocess.CalledProcessError:
+        stderr = get_git_vendor_stderr()
+        if stderr: print(stderr)
+        raise

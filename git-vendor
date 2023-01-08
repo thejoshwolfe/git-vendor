@@ -294,18 +294,20 @@ def cli():
     else: assert False
 
 def do_add(url, follow_branch, pin_to_tag, pin_to_commit, dir, subdir, include, exclude, allow_dir_exists):
-    canonical_dir = actual_dir_to_path_in_repo(dir, "--dir")
-    existing_items = read_config_file()
-    assert not any(canonical_dir == item.dir for item in existing_items), "dir is already a vendored dir: " + shlex.quote(canonical_dir)
-
     new_config_item = ConfigItem()
 
-    new_config_item.dir = validate_dir(canonical_dir, "--dir", allow_dir_exists)
+    new_config_item.dir = actual_dir_to_path_in_repo(dir, "--dir")
+    validate_dir(new_config_item.dir, "--dir")
+    existing_items = read_config_file()
+    validate_no_primary_key_conflicts(new_config_item.dir, "--dir", existing_items)
+    if not allow_dir_exists:
+        validate_dir_not_exists(new_config_item.dir, "--dir")
 
     validate_url(url, warn=True)
     new_config_item.url = url
     if subdir != None:
-        new_config_item.subdir = validate_subdir(subdir)
+        new_config_item.subdir = canonicalize_relative_path(subdir, "--subdir")
+        validate_subdir(new_config_item.subdir, "--subdir")
 
     if follow_branch != None:
         validate_ref("--follow-branch", follow_branch)
@@ -331,7 +333,7 @@ def do_add(url, follow_branch, pin_to_tag, pin_to_commit, dir, subdir, include, 
             new_config_item.follow_branch = ref_name
             break
         else:
-            assert False, "no --follow-branch, --pin-to-tag, or --pin-to-commit given, and remote does not have a HEAD branch: " + shlex.quote(url)
+            raise UserError("no --follow-branch, --pin-to-tag, or --pin-to-commit given, and remote does not have a HEAD branch: " + shlex.quote(url))
 
     if include:
         new_config_item.include = include
@@ -348,7 +350,8 @@ def do_set(url, follow_branch, pin_to_tag, pin_to_commit, dir, subdir, include, 
         config_item.url = url
     if subdir != None:
         if subdir != "":
-            config_item.subdir = validate_subdir(subdir)
+            config_item.subdir = canonicalize_relative_path(subdir, "--subdir")
+            validate_subdir(config_item.subdir, "--subdir")
         else:
             config_item.subdir = None
 
@@ -439,9 +442,13 @@ def do_rename(actual_dir, actual_new_dir, allow_dir_exists):
     config_item, section_index = find_config_item_by_dir(actual_dir)
 
     canonical_dir = actual_dir_to_path_in_repo(actual_new_dir, "--new-dir")
-    assert config_item.dir != canonical_dir, "cannot rename something to itself: " + shlex.quote(canonical_dir)
-    assert not any(canonical_dir == item.dir for item in read_config_file()), "dir is already a vendored dir: " + shlex.quote(canonical_dir)
-    config_item.dir = validate_dir(canonical_dir, "--new-dir", allow_dir_exists)
+    if config_item.dir == canonical_dir: raise UserError("cannot rename something to itself: " + shlex.quote(canonical_dir))
+    validate_no_primary_key_conflicts(canonical_dir, "--new-dir", read_config_file())
+    config_item.dir = canonical_dir
+    validate_dir(config_item.dir, "--new-dir")
+    if not allow_dir_exists:
+        validate_dir_not_exists(config_item.dir, "--dir")
+
     edit_config_file(config_item, section_index)
 
     # Trailing slashes on this parameter ruin everything.
@@ -481,7 +488,7 @@ def do_save_patch(actual_dir):
     for porcelain_status_line in dirty_lines:
         worktree_status_code = porcelain_status_line[1]
         if worktree_status_code != " ":
-            sys.exit("\n".join("ERROR: " + line for line in [
+            raise UserError("\n".join([
                 "There are unstaged changes in: " + shlex.quote(actual_dir),
                 "Use \"git add\" to stage the changes, then re-run this command."
             ]))
@@ -535,8 +542,8 @@ def find_config_item_by_dir(actual_dir):
     for section_index, config_item in enumerate(read_config_file()):
         if config_item.dir == path_in_repo:
             return (config_item, section_index)
-    sys.exit("\n".join("ERROR: " + line for line in [
-        "dir is not vendored content: " + path_in_repo,
+    raise UserError("\n".join([
+        "dir is not vendored content: " + shlex.quote(path_in_repo),
         "tip: try \"git-vendor list\"",
     ]))
 
@@ -596,6 +603,7 @@ def download_the_thing(config_item, section_index):
         get_git_commit_tree_object_name(config_item.commit), config_item.subdir,
         config_item.include, config_item.exclude,
         section_index)
+
     # Apply patches.
     if config_item.tree_patch != None:
         old_commit, old_tree_object_name, new_tree_object_name = config_item.tree_patch.split(":")
@@ -615,7 +623,7 @@ def download_the_thing(config_item, section_index):
                     config_item.include, config_item.exclude,
                     section_index)
                 if recreated_old_tree_object_name != old_tree_object_name:
-                    sys.exit("\n".join("ERROR: " + line for line in [
+                    raise UserError("\n".join([
                         "Something changed in the config file, and `git gc` has deleted an object critical for patching.",
                         "Please revert your changes to `.git-vendor-config`, and run `git-vendor status` to recover the deleted object.",
                         "Then redo your edits, and try again."
@@ -722,7 +730,7 @@ def read_config_file():
     current_config_item = ConfigItem()
     current_config_item_has_any_properties = False
     def line_error(line_index, msg):
-        raise ValidationError("{}:{}: error: {}\n{}\n{}".format(
+        raise UserError("{}:{}: error: {}\n{}\n{}".format(
             os.path.relpath(config_file_path), line_index + 1, msg,
             lines[line_index].rstrip(),
             "^" * len(lines[line_index].rstrip()),
@@ -1089,8 +1097,8 @@ def filter_tree(tree_object_name, start_at_subdir, include, exclude, section_ind
         include_so_far = True
         include_filter_fns = None
     else:
-        include_filter_fns = [compile_filter(pattern, "--include=" + pattern, return_maybe_on_prefix_match=True) for pattern in include]
-    exclude_filter_fns = [compile_filter(pattern, "--exclude=" + pattern) for pattern in exclude]
+        include_filter_fns = [compile_filter(pattern, "--include=" + shlex.quote(pattern), return_maybe_on_prefix_match=True) for pattern in include]
+    exclude_filter_fns = [compile_filter(pattern, "--exclude=" + shlex.quote(pattern)) for pattern in exclude]
     if start_at_subdir != None:
         ls_tree_lines = git("ls-tree",
             "-z", "-d", "--full-tree",
@@ -1099,7 +1107,7 @@ def filter_tree(tree_object_name, start_at_subdir, include, exclude, section_ind
             start_at_subdir,
             mode="null_terminated_lines")
         if len(ls_tree_lines) == 0:
-            sys.exit("ERROR: not found in external repo: --subdir={}".format(shlex.quote(start_at_subdir)))
+            raise UserError("not found in external repo: --subdir={}".format(shlex.quote(start_at_subdir)))
         [ls_tree_line] = ls_tree_lines
         tree_object_name = ls_tree_line.split("\t", 1)[0].rsplit(" ", 1)[1]
 
@@ -1195,7 +1203,7 @@ def filter_tree(tree_object_name, start_at_subdir, include, exclude, section_ind
     recurse(tree_object_name, None, 0, include_so_far, make_get_submodule_path_to_url_fn(tree_object_name))
 
     if len(depth_to_parent_to_ls_tree_lines) == 0:
-        sys.exit("ERROR: no content after filters!")
+        raise UserError("no content after filters!")
 
     # Build new trees from leaves up.
     root_tree = None
@@ -1338,7 +1346,7 @@ def apply_tree_patch(base_tree_object_name, old_tree_object_name, new_tree_objec
         updated_names.append(name)
 
     if len(conflicts) > 0:
-        sys.exit("ERROR: applying tree patch would produce conflicts in these files:\n" + "\n".join(
+        raise UserError("applying tree patch would produce conflicts in these files:\n" + "\n".join(
             "  " + shlex.quote(name)
             for name in conflicts
         ))
@@ -1413,10 +1421,11 @@ MAYBE = "maybe"
 def compile_filter(pattern, error_hint, *, return_maybe_on_prefix_match=False):
     # See `git help gitignore`.
     if "//" in pattern or pattern == "/":
-        raise ValidationError("Invalid pattern: " + error_hint)
+        raise UserError("Invalid pattern: " + error_hint)
+    if pattern == "**":
+        raise UserError("To match anything, please use the pattern '*' instead: " + error_hint)
     if pattern == "**/":
-        # If we don't special case this, it would get reported as "ending with **", which is a little confusing.
-        raise ValidationError("To match any directory, please use the pattern */ instead: " + error_hint)
+        raise UserError("To match any directory, please use the pattern '*/' instead: " + error_hint)
     # Consume leading and trailing slashes.
     tree_only = False
     absolute = False
@@ -1432,14 +1441,14 @@ def compile_filter(pattern, error_hint, *, return_maybe_on_prefix_match=False):
     # Split the pattern.
     pattern_segments = pattern.split("/")
     if pattern_segments[-1] == "**":
-        raise ValidationError("Ending a pattern with ** is the same as omitting it. please omit it: " + error_hint)
+        raise UserError("Ending a pattern with ** is the same as omitting it. please omit it: " + error_hint)
     # Find "**" segments.
     # "a/b/**/c/**/d" => [["a", "b"], ["c"], []] # ("d" is the tip.)
     pattern_segment_runs = [[]]
     tip_pattern = pattern_segments[-1]
     for pattern_segment in pattern_segments[:-1]:
-        if pattern in (".", ".."):
-            raise ValidationError("Pattern cannot contain {} segments: {}".format(repr(pattern), error_hint))
+        if pattern_segment in (".", ".."):
+            raise UserError("Pattern cannot contain {} segments: {}".format(repr(pattern_segment), error_hint))
         if pattern_segment == "**":
             pattern_segment_runs.append([])
         else:
@@ -1742,48 +1751,62 @@ def is_path_within(super_dir, sub_dir):
 def validate_field(field_name, value, error_fn):
     try:
         if field_name == "dir":
-            validate_dir(value, "--dir", True)
+            validate_dir(value, "dir")
         elif field_name == "url":
             validate_url(value, warn=False)
         elif field_name == "subdir":
-            validate_subdir(value)
+            validate_subdir(value, "subdir")
         elif field_name == "follow_branch":
-            validate_ref("--follow-branch", value)
+            validate_ref("follow-branch", value)
         elif field_name == "pin_to_tag":
-            validate_ref("--pin-to-tag", value)
+            validate_ref("pin-to-tag", value)
         elif field_name == "pin_to_commit":
             validate_object_name("--pin-to-commit", value)
         elif field_name == "include":
-            pass
+            compile_filter(value, "include=" + shlex.quote(value))
         elif field_name == "exclude":
-            pass
+            compile_filter(value, "exclude=" + shlex.quote(value))
         elif field_name == "commit":
             validate_object_name("(commit)", value)
         elif field_name == "tree_patch":
             validate_tree_patch(value)
         else: assert False, "unhandled field name: " + field_name
-    except ValidationError as e:
-        error_fn(str(e))
+    except UserError as e:
+        error_fn(e.args[0])
 
 def actual_dir_to_path_in_repo(actual_dir, param_name):
-    repo_root = get_repo_root()
-    assert is_path_within(repo_root, actual_dir), param_name + " is outside the git repo"
-    return os.path.relpath(actual_dir, repo_root).replace(os.path.sep, "/")
+    return canonicalize_relative_path(os.path.relpath(actual_dir, get_repo_root()), param_name)
 
-def validate_dir(path_in_repo, param_name, allow_dir_exists):
-    assert os.path.normpath(path_in_repo).replace(os.path.sep, "/") == path_in_repo, param_name + " must be normalized: " + shlex.quote(path_in_repo)
-    assert not (path_in_repo in (".", "..") or path_in_repo.startswith("../") or path_in_repo.startswith("/")), param_name + " must be a subdir within the repo: " + shlex.quote(path_in_repo)
-    if not allow_dir_exists:
-        actual_dir = os.path.join(get_repo_root(), path_in_repo)
-        assert not os.path.exists(actual_dir), param_name + " already exists. try giving --allow-dir-exists."
-    return path_in_repo
+def canonicalize_relative_path(dir, param_name):
+    if os.path.isabs(dir): raise UserError("{} must be a relative path: {}".format(param_name, shlex.quote(dir)))
+    dir = os.path.normpath(dir).replace(os.path.sep, "/")
+    if dir in (".", "..") or dir.startswith("../"): raise UserError("{} is invalid: {}".format(param_name, shlex.quote(dir)))
+    return dir
 
-def validate_subdir(subdir):
-    if os.path.isabs(subdir) or os.path.commonpath([subdir, ".."]) == "..":
-        raise ValidationError("Invalid --subdir={}".format(shlex.quote(subdir)))
-    if os.path.normpath(subdir) == ".":
-        return None
-    return os.path.normpath(subdir).replace(os.path.sep, "/")
+def validate_dir_not_exists(dir, param_name):
+    actual_dir = os.path.join(get_repo_root(), dir)
+    if os.path.exists(actual_dir):
+        raise UserError("\n".join([
+            "{} already exists: {}".format(param_name, shlex.quote(os.path.relpath(actual_dir))),
+            "try giving --allow-dir-exists.",
+        ]))
+
+def validate_dir(dir, param_name):
+    validate_canonicalized_relative_path(dir, param_name)
+def validate_subdir(subdir, param_name):
+    validate_canonicalized_relative_path(subdir, param_name)
+def validate_canonicalized_relative_path(dir, param_name):
+    if canonicalize_relative_path(dir, param_name) != dir:
+        raise UserError("{} must be normalized: {}".format(param_name, shlex.quote(dir)))
+
+def validate_no_primary_key_conflicts(dir, param_name, existing_items):
+    for item in existing_items:
+        if dir == item.dir:
+            raise UserError("{} is already a vendored dir: {}".format(param_name, shlex.quote(dir)))
+        if dir.startswith(item.dir + "/"):
+            raise UserError("{} is within an already vendored dir: {}".format(param_name, shlex.quote(dir)))
+        if item.dir.startswith(dir + "/"):
+            raise UserError("{} would completely contain another vendored dir: {}".format(param_name, shlex.quote(dir)))
 
 def validate_url(url, *, warn):
     # See `git help fetch` section GIT URLS.
@@ -1806,23 +1829,23 @@ def validate_url(url, *, warn):
         # To actually use a relative path url with this program, please just convert it to absolute first.
         pass
 
-    raise ValidationError("Invalid --url={}".format(url))
+    raise UserError("Invalid --url={}".format(url))
 
 def validate_ref(param_name, ref):
     # This is really the only thing to check for, because it's interpreted specially during `git fetch` and such.
     if "*" in ref:
-        raise ValidationError("Invalid {}={}".format(param_name, ref))
+        raise UserError("Invalid {}={}".format(param_name, ref))
 # 40 for sha1, 64 for experimental sha256.
 git_object_name_re = re.compile(r'^[0-9a-f]{40}(?:[0-9a-f]{24})?$')
 def validate_object_name(param_name, object_name):
     if git_object_name_re.match(object_name):
         return
-    raise ValidationError("Invalid {}={}".format(param_name, object_name))
+    raise UserError("Invalid {}={}".format(param_name, object_name))
 
 def validate_tree_patch(tree_patch):
     segments = tree_patch.split(":")
     if len(segments) != 3:
-        raise ValidationError("Invalid tree-patch format: " + tree_patch)
+        raise UserError("Invalid tree-patch format: " + tree_patch)
     for i, segment in enumerate(segments):
         validate_object_name("(tree-patch[{}])".format(i), segment)
 
@@ -1830,11 +1853,11 @@ def warning(*lines):
     for line in lines:
         print("WARNING: " + line, file=sys.stderr, flush=True)
 
-class ValidationError(Exception):
+class UserError(Exception):
     pass
 
 if __name__ == "__main__":
     try:
         cli()
-    except ValidationError as e:
-        sys.exit("ERROR: " + str(e))
+    except UserError as e:
+        sys.exit("\n".join("ERROR: " + line for line in e.args[0].split("\n")))
