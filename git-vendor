@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
 
+__version__ = "0.0.0"
+
 import os, sys, re
 import subprocess, shlex
 import fnmatch
@@ -164,6 +166,7 @@ def cli():
 
     # Configure the parser and subparsers.
     parser = argparse.ArgumentParser(formatter_class=formatter_class)
+    parser.add_argument("--version", action="version", version=__version__)
     add_verbose(parser, dest=None)
     add_dry_run(parser, dest=None)
 

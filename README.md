@@ -6,13 +6,73 @@ The main advantage of using `git-vendor` over other solutions (as of writing thi
 
 Example use cases:
 
-* You depend on an open source library (or a specific version of it) that isn't available in your system package manager. You opt to simply copy the entire source code at a tagged version into your project. You delete all the examples, unit tests, and CI/CD configuration from that project, since it doesn't matter for your project.
+* You depend on an open source library (or a specific version of it) and for whatever reason, you can't depend on a package manager to provide the dependency to your collaborators. You opt to simply copy the dependency's source code at a tagged version into your project. You delete all the examples, unit tests, and CI/CD configuration from that project, since it doesn't matter for your project.
 * Your organization maintains code in multiple repositories. An API schema in a server's repo is also needed to build a client in a different repo. Currently the client repo adds the entire server's codebase as a git submodule to just have access to the API schema, but that dependency is slowing down and complicating your CI/CD pipelines as well as straining the Principle of Least Privilege. You decide to copy the API schema alone into your client repo, and you need a way to keep the copy up to date with the server repo's release branch.
 
-TODO: usage examples that demonstrate how this tool solves those problems.
+Usage:
 
+```sh
+# Copy all *.proto files from one repo into your repo with the same directory structure:
+git-vendor add protos/backend --url git@github.com:organization/backend.git --follow-branch devel \
+    --include '*.proto' \
+    --exclude '*_test.proto'
+git commit -m "vendor .proto files from the backend repo"
+
+# Copy ffmpeg source code, and put it in 'deps/ffmpeg/'.
+# Exclude irrelevant content.
+git-vendor add \
+    --dir=deps/ffmpeg \
+    --url=https://git.ffmpeg.org/ffmpeg.git \
+    --pin-to-tag=n4.4.1 \
+    --exclude=/configure \
+    --exclude=/Makefile \
+    --exclude=tests/ \
+    --exclude=.gitignore \
+    --exclude=/doc/ \
+    --exclude=/ffbuild/
+git commit -m "ffmpeg n4.4.1"
+
+# Copy git-vendor itself into your project so that it's available to your contributors:
+git-vendor add --url https://github.com/thejoshwolfe/git-vendor.git --dir vendor/git-vendor --include=/git-vendor
+git commit -m "add git-vendor tool"
+```
+
+List vendored directories:
+```
+$ git-vendor ls
+protos/backend (follow: devel)
+deps/ffmpeg (pinned: n4.4.1)
+vendor/git-vendor (follow: main)
+```
+
+Check if anything's been updated (via the `--follow-branch` setting):
+```
+$ git-vendor st
+changes to to be applied to: protos/backend
+ 2 files changed, 1 insertion(+), 314 deletions(-)
+```
+
+Update anything that's got new changes according to the `--follow-branch` settings:
+```
+$ git-vendor update
+changes to to be applied to: protos/backend
+ 2 files changed, 1 insertion(+), 314 deletions(-)
+
+$ git status
+On branch main
+Changes to be committed:
+  (use "git restore --staged <file>..." to unstage)
+	modified:   .git-vendor-config
+	deleted:    protos/backend/old-service.proto
+	new file:   protos/backend/new-service.proto
+
+$ git commit -m "update dependencies"
+```
+
+Contents of this document:
 <!--GEN_TOC_START-->
 * [Status](#status)
+* [Development](#development)
 * [Reference](#reference)
     * [Config file](#config-file)
     * [Common options](#common-options)
@@ -53,8 +113,31 @@ TODO: usage examples that demonstrate how this tool solves those problems.
     - [x] Cleanup argparse CLI so that more options are accepted as positional arguments. E.g. `git-vendor mv --dir a/b/c --new-dir a/z/c` should instead be expressible as `git-vendor mv a/{b,z}/c` (in Bash).
 - [x] Unit tests for corner case error handling.
 - [x] Audit local named ref usage and how it relates to objects being orphaned and gc'ed too soon, or perhaps never being gc'ed when they should.
-- [ ] Examples in documentation.
-- [ ] Declare 1.0 stable, and move the remaining unfinished items in this list to GitHub Issues.
+- [x] Examples in documentation.
+- [ ] Declare 1.0 stable.
+
+## Development
+
+The script is a single file: `git-vendor`.
+There are no dependencies beyond the Python 3.6+ standard library and the `git` subprocess.
+
+The test harness is run via `./test` from the repo root:
+```
+git-vendor$ ./test
+file_name_filtering...pass
+follow_branch...pass
+pin_to_tag...pass
+pin_to_commit...pass
+edit_config_through_cli...pass
+multiple_upstreams...pass
+submodules...pass
+sha256...pass
+clean_preserves_ignored...pass
+errors...pass
+```
+
+There is also a `./generate_help.py` command to populate a few sections of this document.
+Look for the HTML-style comments in this README for the markers where the content gets inserted.
 
 ## Reference
 
