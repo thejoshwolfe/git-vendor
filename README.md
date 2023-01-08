@@ -33,7 +33,7 @@ git-vendor add \
 git commit -m "ffmpeg n4.4.1"
 
 # Copy git-vendor itself into your project so that it's available to your contributors:
-git-vendor add --url https://github.com/thejoshwolfe/git-vendor.git --dir vendor/git-vendor --include=/git-vendor
+git-vendor add --url https://github.com/thejoshwolfe/git-vendor.git --dir vendor/git-vendor --include=/git-vendor --follow-branch=release
 git commit -m "add git-vendor tool"
 ```
 
@@ -71,7 +71,8 @@ $ git commit -m "update dependencies"
 
 Contents of this document:
 <!--GEN_TOC_START-->
-* [Status](#status)
+* [Version history](#version-history)
+    * [v1.0.0](#v100)
 * [Development](#development)
 * [Reference](#reference)
     * [Config file](#config-file)
@@ -92,29 +93,23 @@ Contents of this document:
     * [ingydotnet/git-subrepo](#ingydotnetgit-subrepo)
 <!--GEN_TOC_END-->
 
-## Status
+## Version history
 
-- [x] Basic initialization and download for a one-time import.
-- [x] Following a branch with `--follow-branch`, and checking for and incorporating changes since the last download.
-    - [x] Pinning content to a specific tag with `--pin-to-tag`. In this mode, the third-party server is assumed to never update the ref, and is not queried in the typical case.
-    - [x] Pinning content to a specific commit with `--pin-to-commit`.
-    - [x] The default is to follow the branch with the name determined via `git ls-remote --symref <url> HEAD`.
-    - [x] Rudimentary support for repos using sha256 instead of sha1.
-- [x] Configuration information stored in a file `.git-vendor-config` in your repo. Automatically gets edited as appropriate while maintaining formatting and comments.
-    - [x] Convenient command to support removing vendored content.
-    - [x] Convenient command to support renaming/moving local vendored content.
-    - [x] Convenient command to support editing the config file.
-    - [x] Validation for a manually edited config file.
-    - [x] Quoting unusual characters in the config file uses shell syntax using Python's `shlex` module.
-- [x] File name based include/exclude filtering of external content. The syntax is very similar to the gitignore syntax.
-- [x] Vendoring a subdirectory instead of the entire project's directory structure. E.g. with `--dir=vendor/foo --subdir=src`, the external file `src/bar.txt` in your project becomes as `vendor/foo/bar.txt` with no `src` component.
-- [x] Support for also vendoring the submodules of a vendored project while following the proper commit pointers. (They can be omitted with a file name based exclude rule.)
-- [x] Proper documentation for command line interface and config file.
-    - [x] Cleanup argparse CLI so that more options are accepted as positional arguments. E.g. `git-vendor mv --dir a/b/c --new-dir a/z/c` should instead be expressible as `git-vendor mv a/{b,z}/c` (in Bash).
-- [x] Unit tests for corner case error handling.
-- [x] Audit local named ref usage and how it relates to objects being orphaned and gc'ed too soon, or perhaps never being gc'ed when they should.
-- [x] Examples in documentation.
-- [ ] Declare 1.0 stable.
+#### v1.0.0
+
+- Support for following a branch with `--follow-branch`, and checking for and incorporating changes since the last download.
+    - Support for pinning content to a specific tag with `--pin-to-tag`. In this mode, the third-party server is assumed to never update the ref, and is not queried in the typical case.
+    - Support for pinning content to a specific commit with `--pin-to-commit`.
+    - The default is to follow the branch with the name determined via `git ls-remote --symref <url> HEAD`.
+- Configuration information stored in a file `.git-vendor-config` in your repo. Automatically gets edited as appropriate while maintaining formatting and comments.
+    - Convenient command to support removing vendored content: `git-vendor rm`
+    - Convenient command to support renaming/moving local vendored content: `git-vendor mv`
+    - Convenient command to support editing the config file: `git-vendor set`
+    - Quoting unusual characters in the config file uses shell syntax using Python's `shlex` module.
+- File name based include/exclude filtering of external content. The syntax is very similar to the gitignore syntax. See Reference.
+- Support for vendoring a subdirectory instead of the entire project's directory structure. E.g. with `--dir=vendor/foo --subdir=src`, the external file `src/bar.txt` in your project becomes as `vendor/foo/bar.txt` with no `src` component.
+- Support for also vendoring the submodules of a vendored project while following the proper commit pointers. (They can be omitted with a file name based exclude rule.)
+- Rudimentary support for repos using sha256 instead of sha1.
 
 ## Development
 
