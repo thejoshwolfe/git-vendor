@@ -46,17 +46,21 @@ def cli():
         parser.add_argument("--dry-run", action="store_true", dest=dest, help=
             "Do not cause any changes, but show what would be done.")
 
-    def add_dir_as_arg_or_kwarg(parser, to_be="is"):
+    def add_required_dir(parser, to_be="is"):
         parser.add_argument("dir", nargs="?", help=
             "The directory in your repo where the vendored content {} located. "
             "This option (or --dir) is required.".format(to_be))
         parser.add_argument("--dir", metavar="dir", dest="_kwarg_dir", help=
             "Alternate way of specifying the 'dir' argument.")
     UNSPECIFIED_AND_NOT_REQUIRED = object()
-    def add_optional_dir(parser):
-        parser.add_argument("dir", nargs="?", default=UNSPECIFIED_AND_NOT_REQUIRED, help=
-            "The single directory to operate on. "
-            "If unspecified, operate on all of them.")
+    def add_optional_dir(parser, default=UNSPECIFIED_AND_NOT_REQUIRED):
+        if default == UNSPECIFIED_AND_NOT_REQUIRED:
+            help = ("The single directory to operate on. "
+                    "If unspecified, operate on all of them.")
+        else:
+            help = ("The directory in your repo for the vendored content. "
+                    " The default is '%(default)s'.")
+        parser.add_argument("dir", nargs="?", default=default, help=help)
         parser.add_argument("--dir", metavar="dir", dest="_kwarg_dir", help=
             "Alternate way of specifying the 'dir' argument.")
     def add_dir_and_new_dir(parser):
@@ -173,11 +177,18 @@ def cli():
     subparsers = parser.add_subparsers(title="command", dest="command", required=True, help=
         "Give --help after a command to see more help.")
 
-    subparser = add_parser(subparsers, "add", help=
-        "Add a new vendored dir from a url.")
+    subparser = add_parser(subparsers, "self", help=
+        "Add git-vendor itself to your repo following the 'release' branch. This is the recommended way to use git-vendor for keeping your other vendored content up to date.")
     add_verbose(subparser)
     add_dry_run(subparser)
-    add_dir_as_arg_or_kwarg(subparser, to_be="will be")
+    add_optional_dir(subparser, default="deps/git-vendor")
+    add_allow_dir_exists(subparser, "dir")
+
+    subparser = add_parser(subparsers, "add", help=
+        "Add a new vendored dir from a url. See also the 'self' command.")
+    add_verbose(subparser)
+    add_dry_run(subparser)
+    add_required_dir(subparser, to_be="will be")
     add_subdir(subparser)
     add_url(subparser, True)
     add_follow_or_pin(subparser)
@@ -191,7 +202,7 @@ def cli():
         "see the 'rename' command for that instead.")
     add_verbose(subparser)
     add_dry_run(subparser)
-    add_dir_as_arg_or_kwarg(subparser)
+    add_required_dir(subparser)
     add_subdir(subparser)
     add_url(subparser, False)
     add_follow_or_pin(subparser)
@@ -231,7 +242,7 @@ def cli():
             subparser = add_parser(subparsers, name, *aliases, help=help_content)
             add_verbose(subparser)
             add_dry_run(subparser)
-            add_dir_as_arg_or_kwarg(subparser)
+            add_required_dir(subparser)
 
     # The stdlib part of the arg parsing.
     args = parser.parse_args()
@@ -272,7 +283,16 @@ def cli():
         CliOptions.dry_run = True
 
     # Handle command
-    if args.command == "add":
+    if args.command == "self":
+        do_add(
+            "https://github.com/thejoshwolfe/git-vendor.git",
+            dir=args.dir,
+            allow_dir_exists=args.allow_dir_exists,
+            follow_branch="release",
+            include=["git-vendor"],
+            pin_to_tag=None, pin_to_commit=None, subdir=None, exclude=None,
+        )
+    elif args.command == "add":
         assert args.url and args.dir
         do_add(args.url, args.follow_branch, args.pin_to_tag, args.pin_to_commit, args.dir, args.subdir, args.include, args.exclude, args.allow_dir_exists)
     elif args.command == "set":
