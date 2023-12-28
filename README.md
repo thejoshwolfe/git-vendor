@@ -33,7 +33,7 @@ git-vendor add \
 git commit -m "ffmpeg n4.4.1"
 
 # Copy git-vendor itself into your project so that it's available to your contributors:
-git-vendor add --url https://github.com/thejoshwolfe/git-vendor.git --dir vendor/git-vendor --include=/git-vendor --follow-branch=release
+git-vendor self
 git commit -m "add git-vendor tool"
 ```
 
@@ -42,7 +42,7 @@ List vendored directories:
 $ git-vendor ls
 protos/backend (follow: devel)
 deps/ffmpeg (pinned: n4.4.1)
-vendor/git-vendor (follow: main)
+vendor/git-vendor (follow: release)
 ```
 
 Check if anything's been updated (via the `--follow-branch` setting):
