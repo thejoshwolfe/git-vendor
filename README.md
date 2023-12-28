@@ -72,6 +72,7 @@ $ git commit -m "update dependencies"
 Contents of this document:
 <!--GEN_TOC_START-->
 * [Version history](#version-history)
+    * [v1.1.0](#v110)
     * [v1.0.0](#v100)
 * [Development](#development)
 * [Reference](#reference)
@@ -94,6 +95,10 @@ Contents of this document:
 <!--GEN_TOC_END-->
 
 ## Version history
+
+#### v1.1.0
+
+- Add `git-vendor self` command, which vendors git-vendor itself in your repo with the suggested defaults.
 
 #### v1.0.0
 
