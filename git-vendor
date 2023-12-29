@@ -744,7 +744,7 @@ def read_config_file():
             lines = list(f)
     except FileNotFoundError:
         lines = []
-    if len(lines) == 0:
+    if all(line.strip()[:1] in ("", "#") for line in lines):
         return []
 
     primary_keys = set()
