@@ -289,7 +289,7 @@ def cli():
             dir=args.dir,
             allow_dir_exists=args.allow_dir_exists,
             follow_branch="release",
-            include=["git-vendor"],
+            include=["/git-vendor"],
             pin_to_tag=None, pin_to_commit=None, subdir=None, exclude=None,
         )
     elif args.command == "add":
