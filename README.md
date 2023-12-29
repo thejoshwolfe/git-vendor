@@ -72,6 +72,7 @@ $ git commit -m "update dependencies"
 Contents of this document:
 <!--GEN_TOC_START-->
 * [Version history](#version-history)
+    * [v1.1.1](#v111)
     * [v1.1.0](#v110)
     * [v1.0.0](#v100)
 * [Development](#development)
@@ -95,6 +96,10 @@ Contents of this document:
 <!--GEN_TOC_END-->
 
 ## Version history
+
+#### v1.1.1
+
+- Fix `git-vendor self` pattern matching not being strict enough.
 
 #### v1.1.0
 
