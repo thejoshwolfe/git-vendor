@@ -72,6 +72,7 @@ $ git commit -m "update dependencies"
 Contents of this document:
 <!--GEN_TOC_START-->
 * [Version history](#version-history)
+    * [v1.1.2](#v112)
     * [v1.1.1](#v111)
     * [v1.1.0](#v110)
     * [v1.0.0](#v100)
@@ -96,6 +97,10 @@ Contents of this document:
 <!--GEN_TOC_END-->
 
 ## Version history
+
+#### v1.1.2
+
+- Fix config files that contain only comments not being treated as empty config files.
 
 #### v1.1.1
 
