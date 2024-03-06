@@ -98,6 +98,11 @@ Contents of this document:
 
 ## Version history
 
+#### v1.1.3
+
+- Fix bug where `update` would overlook local modifications when there are no upstream changes. Now `update` will discard the local modifications.
+- Add comment to the top of `git-vendor` explaining itself in a self-vendored context.
+
 #### v1.1.2
 
 - Fix config files that contain only comments not being treated as empty config files.

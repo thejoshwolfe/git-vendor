@@ -1,5 +1,19 @@
 #!/usr/bin/env python3
 
+###############################################################################
+# Hello! If you're reading this, this script was probably imported into your  #
+# repository from https://github.com/thejoshwolfe/git-vendor . This is a      #
+# utility for importing files from another repo, similar to `git submodules`, #
+# but embeds the content into your repo directly so there's no need for extra #
+# steps after a `git pull`. This script is capable of updating the embedded   #
+# content, including itself, and likely that's done by:                       #
+#                                                                             #
+#     ./deps/git-vendor/git-vendor update                                     #
+#     git commit                                                              #
+#                                                                             #
+# Report bugs to: https://github.com/thejoshwolfe/git-vendor/issues           #
+###############################################################################
+
 __version__ = "v1.1.2"
 
 import os, sys, re
@@ -500,14 +514,8 @@ def do_rename(actual_dir, actual_new_dir, allow_dir_exists):
 
 def do_save_patch(actual_dir):
     config_item, section_index = find_config_item_by_dir(actual_dir)
-    repo_root = get_repo_root()
 
-    dirty_lines = git("status",
-        "-z",
-        "--",
-        config_item.dir,
-        cwd=repo_root,
-        mode="null_terminated_lines")
+    dirty_lines = git_status(config_item)
     for porcelain_status_line in dirty_lines:
         worktree_status_code = porcelain_status_line[1]
         if worktree_status_code != " ":
@@ -666,16 +674,23 @@ def download_the_thing(config_item, section_index):
 
     current_complete_tree_object_name = git("write-tree", mode="single_line")
     new_complete_tree_object_name = insert_tree_at_path(current_complete_tree_object_name, vendored_tree_object_name, config_item.dir)
-    if current_complete_tree_object_name == new_complete_tree_object_name:
+
+    index_is_correct = current_complete_tree_object_name == new_complete_tree_object_name
+    working_tree_is_clean = len(git_status(config_item)) == 0
+    if index_is_correct and working_tree_is_clean:
         # Already up to date.
         if not CliOptions.dry_run:
-            print("Already up to date.")
+            print("{}: Already up to date.".format(config_item.dir))
         return
 
     if CliOptions.dry_run:
         # Show a diff of the incoming changes.
         print("")
-        print("changes to to be applied to: " + config_item.dir)
+        if not index_is_correct:
+            print("changes to to be applied to: " + config_item.dir)
+        elif not working_tree_is_clean:
+            print("would discard local modifications to: " + config_item.dir)
+        else: assert False
         git("diff",
             "--shortstat",
             current_complete_tree_object_name, new_complete_tree_object_name,
@@ -707,13 +722,17 @@ def download_the_thing(config_item, section_index):
             if len(lines) == 0:
                 break
 
-        # Tell the user to proceed with a git commit.
-        print("Changes staged to be committed:")
-        git("diff",
-            "--cached", "--shortstat",
-            mode="inherit_stdout")
-        print("")
-        print("Use \"git commit\" to proceed with the commit.")
+        if len(git_status(config_item)) != 0:
+            # Tell the user to proceed with a git commit.
+            print("Changes staged to be committed:")
+            git("diff",
+                "--cached", "--shortstat",
+                mode="inherit_stdout")
+            print("")
+            print("Use \"git commit\" to proceed with the commit.")
+        else:
+            # If we got to this point past the above "Already up to date" check, it means we discard local modifications.
+            print("{}: Local modifications discarded".format(config_item.dir))
 
 class ConfigItem:
     def __init__(self):
@@ -1662,6 +1681,15 @@ def get_repo_root():
     return git("rev-parse",
         "--show-toplevel",
         mode="single_line")
+
+def git_status(config_item):
+    dirty_lines = git("status",
+        "-z",
+        "--",
+        config_item.dir,
+        cwd=get_repo_root(),
+        mode="null_terminated_lines")
+    return dirty_lines
 
 def git(*args, mode, cwd=".", input=None, output_path=None, suppress_stderr=False, skip_in_dry_run=False):
     if type(input) == str:
