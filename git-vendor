@@ -14,7 +14,7 @@
 # Report bugs to: https://github.com/thejoshwolfe/git-vendor/issues           #
 ###############################################################################
 
-__version__ = "v1.2.0"
+__version__ = "v1.2.1"
 
 import os, sys, re
 import subprocess, shlex

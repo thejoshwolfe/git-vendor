@@ -98,6 +98,10 @@ Contents of this document:
 
 ## Version history
 
+#### v1.2.1
+
+- Changed `git-vendor list` output to be more consistent. e.g. `(pin-to-tag=main)` instead of `(pinned: main)`.
+
 #### v1.2.0
 
 - Add `git-vendor edit` as an alias for `git-vendor set`.
