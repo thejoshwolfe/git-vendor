@@ -465,11 +465,11 @@ def do_list(maybe_dir):
     for config_item in the_things:
         annotations = []
         if config_item.follow_branch != None:
-            annotations.append("follow: " + config_item.follow_branch)
+            annotations.append("follow-branch=" + config_item.follow_branch)
         elif config_item.pin_to_tag != None:
-            annotations.append("pinned: " + config_item.pin_to_tag)
+            annotations.append("pin-to-tag=" + config_item.pin_to_tag)
         elif config_item.pin_to_commit != None:
-            annotations.append("pinned: " + git("rev-parse", "--short", config_item.pin_to_commit, mode="single_line"))
+            annotations.append("pin-to-commit=" + git("rev-parse", "--short", config_item.pin_to_commit, mode="single_line"))
         else: assert False
         if config_item.tree_patch != None:
             if config_item.tree_patch.endswith("-conflicts"):
