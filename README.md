@@ -98,6 +98,11 @@ Contents of this document:
 
 ## Version history
 
+#### v1.2.0
+
+- Add `git-vendor edit` as an alias for `git-vendor set`.
+- Fixed `git-vendor set --pin-to-tag` not fetching the commit. Also applies to `git-vendor set --url` when using `--pin-to-tag`.
+
 #### v1.1.3
 
 - Fix bug where `update` would overlook local modifications when there are no upstream changes. Now `update` will discard the local modifications.

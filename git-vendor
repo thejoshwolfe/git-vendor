@@ -14,7 +14,7 @@
 # Report bugs to: https://github.com/thejoshwolfe/git-vendor/issues           #
 ###############################################################################
 
-__version__ = "v1.1.3"
+__version__ = "v1.2.0"
 
 import os, sys, re
 import subprocess, shlex
@@ -209,7 +209,7 @@ def cli():
     add_include_exclude(subparser)
     add_allow_dir_exists(subparser, "dir")
 
-    subparser = add_parser(subparsers, "set", help=
+    subparser = add_parser(subparsers, "set", "edit", help=
         "Edits the settings for a vendored dir. "
         "This option accepts much the same options as 'add', "
         "however the location of the vendored dir cannot be changed with this option; "
@@ -309,7 +309,7 @@ def cli():
     elif args.command == "add":
         assert args.url and args.dir
         do_add(args.url, args.follow_branch, args.pin_to_tag, args.pin_to_commit, args.dir, args.subdir, args.include, args.exclude, args.allow_dir_exists)
-    elif args.command == "set":
+    elif args.command in ("set", "edit"):
         assert args.dir
         do_set(args.url, args.follow_branch, args.pin_to_tag, args.pin_to_commit, args.dir, args.subdir, args.include, args.exclude)
     elif args.command in ("up", "update"): # and "status"
@@ -382,8 +382,11 @@ def do_add(url, follow_branch, pin_to_tag, pin_to_commit, dir, subdir, include, 
 def do_set(url, follow_branch, pin_to_tag, pin_to_commit, dir, subdir, include, exclude):
     config_item, section_index = find_config_item_by_dir(dir)
 
+    needs_fetch = False
     if url != None:
         validate_url(url, warn=True)
+        if config_item.url != url:
+            needs_fetch = True
         config_item.url = url
     if subdir != None:
         if subdir != "":
@@ -394,16 +397,23 @@ def do_set(url, follow_branch, pin_to_tag, pin_to_commit, dir, subdir, include, 
 
     if follow_branch != None:
         validate_ref("--follow-branch", follow_branch)
+        if config_item.follow_branch != follow_branch:
+            needs_fetch = True
         config_item.follow_branch = follow_branch
         config_item.pin_to_tag = None
         config_item.pin_to_commit = None
     elif pin_to_tag != None:
         validate_ref("--pin-to-tag", pin_to_tag)
+        if config_item.pin_to_tag != pin_to_tag:
+            needs_fetch = True
         config_item.follow_branch = None
         config_item.pin_to_tag = pin_to_tag
         config_item.pin_to_commit = None
     elif pin_to_commit != None:
         validate_object_name("--pin-to-commit", pin_to_commit)
+        if config_item.pin_to_commit != pin_to_commit:
+            # This doesn't do anything, but the code is clearer if we invalidate consistently in this case also.
+            needs_fetch = True
         config_item.follow_branch = None
         config_item.pin_to_tag = None
         config_item.pin_to_commit = pin_to_commit
@@ -418,6 +428,10 @@ def do_set(url, follow_branch, pin_to_tag, pin_to_commit, dir, subdir, include, 
             config_item.exclude = []
         else:
             config_item.exclude = exclude
+
+    if needs_fetch:
+        # This will trigger a re-fetch.
+        config_item.commit = None
 
     download_the_thing(config_item, section_index)
     cleanup_refs([section_index], False)
