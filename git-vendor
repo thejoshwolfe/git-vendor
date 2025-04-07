@@ -249,9 +249,17 @@ def cli():
     if os.environ.get("GIT_VENDOR_ALLOW_EXPERIMENTAL_TREE_PATCH", ""):
         for name, aliases, help_content in [
             ("save-edits", ["save-patch"],
-                "EXPERIMENTAL: save edits to vendored content."),
+                "EXPERIMENTAL: save edits to vendored content. "
+                "For a dir that is already managed by git-vendor (use 'add' first if necessary), "
+                "make edits to the content, git add the changes, then run 'save-edits'. "
+                "git-vendor will record the diff as a pair of tree hashes and a base commit in .git-vendor-config. "
+                "This diff will be preserved through future 'update' operations if possible. "
+                "If not possible, you will get a merge conflict resolution workflow i think."),
             ("diff-edits", ["diff-patch"],
-                "EXPERIMENTAL: show saved edits to vendored content."),
+                "EXPERIMENTAL: show saved edits to vendored content. "
+                "This displays the difference between the saved pair of tree hashes in .git-vendor-config written by 'save-patch'. "
+                "This does not show what would be saved, but rather what is already saved. "
+                "This is almost never the same thing as 'git diff', so it's still appropriate to use that command sometimes."),
         ]:
             subparser = add_parser(subparsers, name, *aliases, help=help_content)
             add_verbose(subparser)
@@ -464,7 +472,10 @@ def do_list(maybe_dir):
             annotations.append("pinned: " + git("rev-parse", "--short", config_item.pin_to_commit, mode="single_line"))
         else: assert False
         if config_item.tree_patch != None:
-            annotations.append("patched")
+            if config_item.tree_patch.endswith("-conflicts"):
+                annotations.append("patched and has merge conflicts")
+            else:
+                annotations.append("patched")
         print("{} ({})".format(config_item.dir, ", ".join(annotations)))
 
 def do_remove(actual_dir):
@@ -573,6 +584,11 @@ def do_diff_patch(actual_dir):
     if config_item.tree_patch == None:
         return
     old_commit, old_tree_object_name, new_tree_object_name = config_item.tree_patch.split(":")
+    if new_tree_object_name.endswith("-conflicts"):
+        found_merge_conflicts = True
+        new_tree_object_name = new_tree_object_name[:-len("-conflicts")]
+    else:
+        found_merge_conflicts = False
     if not is_git_object_resolvable_as_tree(old_tree_object_name):
         git_fetch_to_cache(config_item.url, old_commit, section_index)
     cmd = ["git", "diff", old_tree_object_name, new_tree_object_name]
@@ -650,8 +666,14 @@ def download_the_thing(config_item, section_index):
         section_index)
 
     # Apply patches.
+    found_merge_conflicts = False
     if config_item.tree_patch != None:
         old_commit, old_tree_object_name, new_tree_object_name = config_item.tree_patch.split(":")
+        if new_tree_object_name.endswith("-conflicts"):
+            sys.exit("\n".join([
+                "ERROR: unresolved merge conflicts in: " + shlex.quote(config_item.dir),
+                merge_conflict_hint,
+            ]))
         if vendored_tree_object_name == old_tree_object_name:
             vendored_tree_object_name = new_tree_object_name
         else:
@@ -675,13 +697,23 @@ def download_the_thing(config_item, section_index):
                     ]))
 
             pre_patch_tree_object_name = vendored_tree_object_name
-            vendored_tree_object_name = apply_tree_patch(vendored_tree_object_name, old_tree_object_name, new_tree_object_name)
+            vendored_tree_object_name, found_merge_conflicts = apply_tree_patch(vendored_tree_object_name, old_tree_object_name, new_tree_object_name, config_item.dir)
             if pre_patch_tree_object_name == vendored_tree_object_name:
                 # The upstream has merged all the changes.
+                assert not found_merge_conflicts, "found text conflicts, but git merge-file didn't write any annotations into the file?"
                 config_item.tree_patch = None
             else:
                 # Update the tree patch for the new commit.
-                config_item.tree_patch = "{}:{}:{}".format(config_item.commit, pre_patch_tree_object_name, vendored_tree_object_name)
+                if found_merge_conflicts:
+                    conflict_suffix = "-conflicts"
+                else:
+                    conflict_suffix = ""
+                config_item.tree_patch = "{}:{}:{}{}".format(
+                    config_item.commit,
+                    pre_patch_tree_object_name,
+                    vendored_tree_object_name,
+                    conflict_suffix,
+                )
 
     # The config item metadata is finalized. Put it in the index.
     edit_config_file(config_item, section_index)
@@ -1294,7 +1326,16 @@ def filter_tree(tree_object_name, start_at_subdir, include, exclude, section_ind
     assert root_tree != None
     return root_tree
 
-def apply_tree_patch(base_tree_object_name, old_tree_object_name, new_tree_object_name):
+
+merge_conflict_hint = """\
+hint: After resolving the conflicts, mark them with
+hint: 'git add <path>', then run 'git-vendor save-edits', then 'git commit' as usual.
+hint: To inspect the currently saved patch, run 'git-vendor diff-edits'.
+hint: You may also want to run 'git-vendor diff-edits' before encountering this conflict.
+hint: To rollback, 'git reset' and 'git checkout' changes to '.git-vendor-config' and to the vendored directory.
+""".rstrip()
+def apply_tree_patch(base_tree_object_name, old_tree_object_name, new_tree_object_name, config_item_dir):
+    """ returns (new_tree_object_name, found_any_conflicts) """
     def read_tree(tree_object_name):
         name_to_stuff = {
             # "path/to/foo.txt", "100644 blob 225788ba527ad53693819c1945849451d80beda3"
@@ -1311,7 +1352,8 @@ def apply_tree_patch(base_tree_object_name, old_tree_object_name, new_tree_objec
     base_tree = read_tree(base_tree_object_name)
     old_tree = read_tree(old_tree_object_name)
     new_tree = read_tree(new_tree_object_name)
-    conflicts = []
+    dire_conflicts = []
+    resolvable_conflicts = []
     updated_names = []
 
     for name, new_stuff in new_tree.items():
@@ -1322,7 +1364,7 @@ def apply_tree_patch(base_tree_object_name, old_tree_object_name, new_tree_objec
         if old_stuff == None:
             # Create file.
             if name in base_tree:
-                conflicts.append(name)
+                dire_conflicts.append("both created: " + shlex.quote(name))
             else:
                 base_tree[name] = new_stuff
                 updated_names.append(name)
@@ -1331,7 +1373,7 @@ def apply_tree_patch(base_tree_object_name, old_tree_object_name, new_tree_objec
         try:
             base_stuff = base_tree[name]
         except KeyError:
-            conflicts.append(name)
+            dire_conflicts.append("patched file no longer exists: " + shlex.quote(name))
             continue
         # Check the types of the objects.
         base_mode_and_type = base_stuff.rsplit(" ", 1)[0]
@@ -1347,7 +1389,7 @@ def apply_tree_patch(base_tree_object_name, old_tree_object_name, new_tree_objec
         else:
             # Something changed with the mode that we can't handle.
             # Perhaps the upstream replaced a file with a symlink.
-            conflicts.append(name)
+            dire_conflicts.append("mode changed: " + shlex.quote(name))
             continue
         with tempfile.NamedTemporaryFile() as base_f, tempfile.NamedTemporaryFile() as old_f, tempfile.NamedTemporaryFile() as new_f:
             # Put the file contentses in temp files.
@@ -1369,6 +1411,9 @@ def apply_tree_patch(base_tree_object_name, old_tree_object_name, new_tree_objec
             # Merge the files.
             try:
                 git("merge-file",
+                    "-L", "<new-upstream>/" + name,
+                    "-L", "<old-upstream>/" + name,
+                    "-L", "<patched>/" + name,
                     base_f.name, old_f.name, new_f.name,
                     mode="inherit_stdout")
             except subprocess.CalledProcessError as e:
@@ -1379,8 +1424,7 @@ def apply_tree_patch(base_tree_object_name, old_tree_object_name, new_tree_objec
                 if e.returncode < 0:
                     raise
                 # There were conflicts.
-                conflicts.append(name)
-                continue
+                resolvable_conflicts.append(os.path.join(config_item_dir, name))
             # The base file has now been modified with the patched content.
             use_stuff = "{} {}".format(
                 use_mode_and_type,
@@ -1396,15 +1440,22 @@ def apply_tree_patch(base_tree_object_name, old_tree_object_name, new_tree_objec
         old_stuff = old_tree[name]
         base_stuff = base_tree.get(name, None)
         if base_stuff != old_stuff:
-            conflicts.append(name)
+            dire_conflicts.append("file deleted by patch was modified by the upstream (tip: try excluding the file instead of patching it out): " + shlex.quote(name))
             continue
         del base_stuff[name]
         updated_names.append(name)
 
-    if len(conflicts) > 0:
-        raise UserError("applying tree patch would produce conflicts in these files:\n" + "\n".join(
-            "  " + shlex.quote(name)
-            for name in conflicts
+    if len(resolvable_conflicts) > 0:
+        # Mimic the git merge conflict output I guess.
+        for name in resolvable_conflicts:
+            print("CONFLICT (git-vendor): Merge conflict in " + shlex.quote(name))
+        print(merge_conflict_hint)
+        # This is not fatal.
+
+    if len(dire_conflicts) > 0:
+        raise UserError("applying tree patch would produce unresolvable conflicts:\n" + "\n".join(
+            "  " + line
+            for line in sorted(dire_conflicts)
         ))
 
     # Create a tree with the new content.
@@ -1418,6 +1469,7 @@ def apply_tree_patch(base_tree_object_name, old_tree_object_name, new_tree_objec
         else:
             depth_to_parent_to_updated_children[0][""].add(name)
 
+    root_tree = None
     for depth in reversed(range(max(depth_to_parent_to_updated_children.keys()) + 1)):
         for parent, updated_children in depth_to_parent_to_updated_children[depth].items():
             new_ls_tree_lines = []
@@ -1471,7 +1523,8 @@ def apply_tree_patch(base_tree_object_name, old_tree_object_name, new_tree_objec
                 else:
                     depth_to_parent_to_updated_children[0][""].add(parent)
 
-    return root_tree
+    assert root_tree != None
+    return (root_tree, len(resolvable_conflicts) > 0)
 
 MAYBE = "maybe"
 def compile_filter(pattern, error_hint, *, return_maybe_on_prefix_match=False):
@@ -1908,6 +1961,8 @@ def validate_object_name(param_name, object_name):
     raise UserError("Invalid {}={}".format(param_name, object_name))
 
 def validate_tree_patch(tree_patch):
+    if tree_patch.endswith("-conflicts"):
+        tree_patch = tree_patch[:-len("-conflicts")]
     segments = tree_patch.split(":")
     if len(segments) != 3:
         raise UserError("Invalid tree-patch format: " + tree_patch)
