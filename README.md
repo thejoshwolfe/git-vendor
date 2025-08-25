@@ -2,7 +2,7 @@
 
 Manage external git content in your git repo. This is like git submodules, but all the content is integrated into your content as though you copied it into your project and committed it normally. This means that collaborators running `git pull` will always get the content; no need to run any git submodule commands. Beyond initially copying the content, this tool can update the content when new changes are made by the upstream repository.
 
-The main advantage of using `git-vendor` over other solutions (as of writing this), is that you can customize the vendored content via file name based filtering, and the filtering is maintained while updating the vendored content to new versions provided by the third party. This is conceptionally similar to maintaining a fork of a submodule, but it's all part of your main repo; no submodules.
+The main advantage of using `git-vendor` over other solutions (as of writing this), is that you can customize the vendored content via file name based filtering, and the filtering is maintained while updating the vendored content to new versions provided by the third party. This is conceptually similar to maintaining a fork of a submodule, but it's all part of your main repo; no submodules.
 
 Example use cases:
 
