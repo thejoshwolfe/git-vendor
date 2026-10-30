@@ -91,7 +91,7 @@ Contents of this document:
     * [Command line](#command-line)
 * [git-vendor vs other options](#git-vendor-vs-other-options)
     * [brettlangdon/git-vendor](#brettlangdongit-vendor)
-    * [`git submoudle`](#git-submoudle)
+    * [`git submodule`](#git-submodule)
     * [`git subtree`](#git-subtree)
     * [ingydotnet/git-subrepo](#ingydotnetgit-subrepo)
 <!--GEN_TOC_END-->
@@ -367,7 +367,7 @@ I named my project the same as that one with the intent to obviate it for every 
 
 [1] It's possible to use simple `git add -A` on local file system content instead of fancy `mktree` algorithms, but that involves multiple additional moving parts and opportunities for things to go wrong and be surprising. For example, your global ignore rules might prevent some of the content from getting added, or the file system's case insensitivity or unicode normalization might cause surprises. In terms of what actually happens between these two approaches, `git add` seems simple at first, but `mktree` is more correct.
 
-#### `git submoudle`
+#### `git submodule`
 
 For some reason, the command line user experience of git submodules is seemingly designed to be atrocious. Just to start off the complaining train, `git status` does not warn you about uninitialized submodules someone else has added to your project. (And the default behavior of `git clone` does not initialize submodules.) This simple problem accounts for about 60% of the wasted time debugging why "something's wrong" with a repository in my experience.
 
